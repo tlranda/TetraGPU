@@ -30,3 +30,9 @@
 *.exe
 *.out
 *.app
+
+# Datasets
+*.vtu
+
+# Build directories
+build_*/
