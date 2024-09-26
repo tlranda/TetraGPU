@@ -227,6 +227,22 @@ std::unique_ptr<std::vector<std::array<int,2>>> make_EV(std::unique_ptr<TV_data>
     return edgeList;
 }
 
+std::unique_ptr<std::vector<std::vector<int>>> make_ET(std::unique_ptr<std::vector<std::array<int, 6>>> cellEdgeList,
+                                                       vtkIdType n_edges,
+                                                       arguments args
+                                                       ) {
+    std::unique_ptr<std::vector<std::vector<int>>> edgeStars = std::make_unique<std::vector<std::vector<int>>>();
+    edgeStars->reserve(n_edges); // ET
+    #pragma omp parallel for num_threads(args.threadNumber)
+    for(size_t i = 0; i < cellEdgeList->size(); ++i) { // for each tetrahedron
+        // std::array<int,6> list of edges for tetra
+        for(const int eid : (*cellEdgeList)[i]) { // for each edge
+            (*edgeStars)[eid].emplace_back(i); // edge :: tetra
+        }
+    }
+    return edgeStars;
+}
+
 int main(int argc, char *argv[]) {
     arguments args;
     parse(argc, argv, args);
@@ -239,7 +255,8 @@ int main(int argc, char *argv[]) {
     // This should be the VE relation, but we can simultaneously determine TE since we are creating edges arbitrarily based on TV
     // Adapted from TTK Explicit Triangulation
     std::cout << "Building edges..." << std::endl;
-    std::vector<std::array<int, 6>> cellEdgeList(tv_relationship->nCells); // TE
+    std::unique_ptr<std::vector<std::array<int, 6>>> cellEdgeList = std::make_unique<std::vector<std::array<int, 6>>>(); // TE
+    cellEdgeList->reserve(tv_relationship->nCells);
 
     // for each vertex, a vector of EdgeData, aka the VE relationship
     std::vector<std::vector<EdgeData>> edgeTable(tv_relationship->nPoints); // VE
@@ -273,11 +290,11 @@ int main(int argc, char *argv[]) {
                     // not found in edgeTable: new edge for VE
                     vec.emplace_back(EdgeData(v1, edgeCount));
                     // New edge for TE
-                    cellEdgeList[cid][ecid] = edgeCount;
+                    (*cellEdgeList)[cid][ecid] = edgeCount;
                     edgeCount++;
                 } else {
                     // found an existing edge, but mark it for TE
-                    cellEdgeList[cid][ecid] = pos->id;
+                    (*cellEdgeList)[cid][ecid] = pos->id;
                 }
                 ecid++;
             }
@@ -285,24 +302,15 @@ int main(int argc, char *argv[]) {
     }
 
     // allocate & fill edgeList in parallel
-    //std::vector<std::array<int,2>> EV = make_EV(std::move(tv_relationship), edgeTable, edgeCount, args);
-    std::vector<std::array<int, 2>> edgeList(edgeCount); // EV
-    #pragma omp parallel for num_threads(args.threadNumber)
-    for(int i = 0; i < tv_relationship->nPoints; ++i) {
-        for(const EdgeData &data : edgeTable[i]) {
-            edgeList[data.id] = {i, data.highVert};
-        }
-    }
+    std::unique_ptr<std::vector<std::array<int,2>>> EV = make_EV(std::move(tv_relationship),
+                                                                 edgeTable,
+                                                                 edgeCount,
+                                                                 args);
 
-    // we can also get edgeStars from cellEdgeList (TE)
-    std::vector<std::vector<int>> edgeStars(edgeCount); // ET
-    #pragma omp parallel for num_threads(args.threadNumber)
-    for(size_t i = 0; i < cellEdgeList.size(); ++i) { // for each tetrahedron
-        // std::array<int,6> list of edges for tetra
-        for(const int eid : cellEdgeList[i]) { // for each edge
-            edgeStars[eid].emplace_back(i); // edge :: tetra
-        }
-    }
+    // we can also get edgeStars from cellEdgeList (ET)
+    std::unique_ptr<std::vector<std::vector<int>>> ET = make_ET(std::move(cellEdgeList),
+                                                                edgeCount,
+                                                                args);
 
     // before the extraction, we have TV relation
     // after the extraction, we now have TE, VE, EV and ET relations
