@@ -2,6 +2,7 @@
 #include <cstdlib> // atoi
 #include <getopt.h> // argument parsing getopt_long()
 #include <unistd.h>
+#include <algorithm> // std::sort
 
 // VTK library requirements
 #include <vtkCellTypes.h>
@@ -126,48 +127,70 @@ int checkCellTypes(vtkPointSet *object) {
  * EV relationship: EV_Data (map edge ID to its 2 vertex IDs)
  * ET relationship: ET_Data (map edge ID to an arbitrary number of cell IDs)
  * VE relationship: VE_Data (map low vertex ID to edge data including other vertex)
+ *
+ * TF relationship: TF_Data (map cell ID to its 4 face IDs)
+ * VF relationship: VF_Data (map low vertex ID to face data including other vertices)
+ * -- maybe not -- ? FV relationship: FV_Data (map face ID to its 3 vertex IDs)
  */
 /*
     From here we can dynamically compute:
     VV = TV' * TV
-    VE (precomputed)
-            VF = --not defined--
+    VE (precomputed to define IDs)
+    VF (precomputed to define IDs)
     VT = TV'
     EV (precomputed)
     EE = EV * VE
-            EF = --not defined--
+    EF = EV * VF
     ET (precomputed)
-            FV = --not defined--
-            FE = --not defined--
-            FF = --not defined--
-            FT = --not defined--
+    FV = VF'
+    FE = VF' * VE
+    FF = TF' * TF
+    FT = TF'
     TV (defined from storage)
-    TE (precomputed)
-            TF = --not defined--
+    TE (precomputed to define IDs)
+    TF (precomputed to define IDs)
     TT = TV * TV'
 */
-typedef struct TV_from_VTK {
-    vtkIdType nPoints, nCells;
-    // For some reason, vector of array is experimentally 20x faster than unique_ptr?
-    //std::unique_ptr<vtkIdType[]> cells;
-    std::vector<std::array<int,4>> cells;
 
-    TV_from_VTK(vtkIdType _points, vtkIdType _cells) {
-        nPoints = _points;
-        nCells = _cells;
-        //cells = std::make_unique<vtkIdType[]>(_points * _cells);
-        cells.resize(nCells);
-    }
-} TV_Data;
+// Tetrahedron geometry constants
+const int nbVertsInCell = 4; // verifiable at VTK load via VTK offsets[1]-offsets[0]
+const int nbFacesInCell = 4;
+const int nbEdgesInCell = 6;
+const int nbVertsInEdge = 2;
+const int nbVertsInFace = 3;
 struct EdgeData {
     vtkIdType highVert = 0, // edge's higher vertex id
               id = 0;       // edge's id
     EdgeData(vtkIdType hv, vtkIdType i) : highVert{hv}, id{i} {}
 };
-typedef std::vector<std::array<vtkIdType,6>> TE_Data;
-typedef std::vector<std::array<vtkIdType,2>> EV_Data;
-typedef std::vector<std::vector<vtkIdType>> ET_Data;
+struct FaceData {
+    vtkIdType middleVert = 0, // face's second vertex id
+              highVert = 0,   // faces highest vertex id
+              id = 0;         // face's id
+    FaceData(vtkIdType mv, vtkIdType hv, vtkIdType i) : middleVert{mv}, highVert{hv}, id{i} {}
+};
+struct TV_Data {
+    vtkIdType nPoints, nCells;
+    // For some reason, vector of array is experimentally 20x faster than unique_ptr?
+    //std::unique_ptr<vtkIdType[]> cells;
+    std::vector<std::array<vtkIdType,nbVertsInCell>> cells;
+
+    TV_Data(vtkIdType _points, vtkIdType _cells) {
+        nPoints = _points;
+        nCells = _cells;
+        //cells = std::make_unique<vtkIdType[]>(_points * _cells);
+        cells.resize(nCells);
+    }
+};
+// Required precomputes for IDs with inherited spatial locality from TV relationship
+typedef std::vector<std::array<vtkIdType,nbEdgesInCell>> TE_Data;
 typedef std::vector<std::vector<EdgeData>> VE_Data;
+typedef std::vector<std::array<vtkIdType,nbFacesInCell>> TF_Data;
+typedef std::vector<std::vector<FaceData>> VF_Data;
+
+// Elective precomputes
+typedef std::vector<std::array<vtkIdType,nbVertsInEdge>> EV_Data;
+typedef std::vector<std::vector<vtkIdType>> ET_Data;
 
 /*
  * Relationship extracting functions
@@ -237,6 +260,9 @@ std::unique_ptr<TV_Data> get_TV_from_VTK(const arguments args) {
     // are always 4*index, ie offsets[0] = 0, offsets[1] = 4, offsets[4] = 16
 
     // Transfer into simpler data structure with unique ownership
+    // We preserve the locality provided by the input, which means we assume
+    // that adjacent cellIDs are close on the mesh and that their vertex IDs
+    // are ordered to promote spatial locality between neighbor cells
     std::unique_ptr<TV_Data> data = std::make_unique<TV_Data>(nPoints, nCells);
     #pragma omp parallel for num_threads(args.threadNumber)
     for (vtkIdType cellIndex = 0; cellIndex < nCells; cellIndex++) {
@@ -253,7 +279,6 @@ vtkIdType make_TE_and_VE(const TV_Data tv_relationship,
                          TE_Data cellEdgeList,
                          VE_Data edgeTable
                          ) {
-    const int nbVertsInCell = 4; // tetrahedron; verifiable via VTK offsets[1]-offsets[0]
     vtkIdType edgeCount = 0;
     // SIMULTANEOUSLY define TE and VE
     for(vtkIdType cid = 0; cid < tv_relationship.nCells; cid++) {
@@ -286,11 +311,11 @@ vtkIdType make_TE_and_VE(const TV_Data tv_relationship,
     }
     return edgeCount;
 }
-std::unique_ptr<EV_Data> make_EV(const TV_Data tv_relationship,
-                                 const VE_Data edgeTable,
-                                 const vtkIdType n_edges,
-                                 const arguments args
-                                 ) {
+std::unique_ptr<EV_Data> elective_make_EV(const TV_Data tv_relationship,
+                                          const VE_Data edgeTable,
+                                          const vtkIdType n_edges,
+                                          const arguments args
+                                         ) {
     std::unique_ptr<EV_Data> edgeList = std::make_unique<EV_Data>(n_edges);
     #pragma omp parallel for num_threads(args.threadNumber)
     for(vtkIdType i = 0; i < tv_relationship.nPoints; ++i) {
@@ -301,10 +326,10 @@ std::unique_ptr<EV_Data> make_EV(const TV_Data tv_relationship,
     return edgeList;
 }
 
-std::unique_ptr<ET_Data> make_ET(const TE_Data cellEdgeList,
-                                 const vtkIdType n_edges,
-                                 const arguments args
-                                 ) {
+std::unique_ptr<ET_Data> elective_make_ET(const TE_Data cellEdgeList,
+                                          const vtkIdType n_edges,
+                                          const arguments args
+                                         ) {
     std::unique_ptr<ET_Data> edgeStars = std::make_unique<ET_Data>(n_edges);
     #pragma omp parallel for num_threads(args.threadNumber)
     for(vtkIdType i = 0; i < cellEdgeList.size(); ++i) { // for each tetrahedron
@@ -316,6 +341,60 @@ std::unique_ptr<ET_Data> make_ET(const TE_Data cellEdgeList,
     return edgeStars;
 }
 
+vtkIdType make_TF_and_VF(const TV_Data tv_relationship,
+                         TF_Data cellFaceList,
+                         VF_Data faceTable
+                        ) {
+    vtkIdType faceCount = 0;
+    // SIMULTANEOUSLY define TF and VF
+    for (vtkIdType cid = 0; cid < tv_relationship.nCells; cid++) {
+        // Use copy constructor to permit function-local mutation
+        std::array<vtkIdType,nbVertsInCell> cellVertices(tv_relationship.cells[cid]);
+        std::sort(cellVertices.begin(), cellVertices.end());
+        // face IDs can be given based on ascending vertex sums
+        // given a SORTED list of vertex IDs, ascending order of vertex sums is:
+        // v[[0,1,2]], v[[0,1,3]], v[[0,2,3]], v[[1,2,3]]
+        // These sums are unique given that vertex IDs are unique (Proof by contradiction)
+        //      a + x + y == x + y + z
+        //      a == z                  ! contradiction
+
+        // Based on sorting, 3 faces will use the lowest FaceID of the Cell
+        // for their basis in faceTable
+        for (int skip_id = 3; skip_id >= 0; skip_id--) {
+            int low_vertex = (skip_id > 0) ? 0 : 1,
+                middle_vertex = (skip_id > 1) ? 1 : 2,
+                high_vertex = (skip_id == 3) ? 2 : 3;
+
+            std::vector<FaceData> &vec = faceTable[cellVertices[low_vertex]];
+            const auto pos = std::find_if(vec.begin(), vec.end(),
+                    [&](const FaceData &f) {
+                        return f.middleVert == cellVertices[middle_vertex] &&
+                               f.highVert == cellVertices[high_vertex];
+                    });
+            if (pos == vec.end()) {
+                // Not found in faceTable: new face for VF
+                vec.emplace_back(FaceData(cellVertices[middle_vertex],
+                                          cellVertices[high_vertex],
+                                          faceCount));
+                cellFaceList[cid][3-skip_id] = faceCount;
+                faceCount++;
+            }
+            // Found an existing face, still mark in TF
+            else cellFaceList[cid][3-skip_id] = pos->id;
+        }
+    }
+    /*
+    for (vtkIdType vidx = 0; vidx < faceTable.size(); vidx++) {
+        if (faceTable[vidx].size() > 0) {
+            for (auto face : faceTable[vidx]) {
+                std::cout << vidx << ", " << face.middleVert << ", " << face.highVert << std::endl;
+            }
+        }
+    }
+    */
+    return faceCount;
+}
+
 int main(int argc, char *argv[]) {
     arguments args;
     parse(argc, argv, args);
@@ -324,30 +403,36 @@ int main(int argc, char *argv[]) {
     // Should utilize VTK API and then de-allocate all of its heap
     std::unique_ptr<TV_Data> tv_relationship = get_TV_from_VTK(args);
 
-    // Example of building edge list from the cell (tetra) array
-    // This should be the VE relation, but we can simultaneously determine TE since we are creating edges arbitrarily based on TV
     // Adapted from TTK Explicit Triangulation
     std::cout << "Building edges..." << std::endl;
-    std::unique_ptr<TE_Data> cellEdgeList = std::make_unique<TE_Data>(tv_relationship->nCells); // TE
-    std::unique_ptr<VE_Data> edgeTable = std::make_unique<VE_Data>(tv_relationship->nPoints); // VE
+    std::unique_ptr<TE_Data> cellEdgeList = std::make_unique<TE_Data>(tv_relationship->nCells);
+    std::unique_ptr<VE_Data> edgeTable = std::make_unique<VE_Data>(tv_relationship->nPoints);
+    // The TE relationship simultaneously informs VE, so make both at once
     vtkIdType edgeCount = make_TE_and_VE(*tv_relationship,
                                          *(cellEdgeList.get()),
                                          *(edgeTable.get()));
+    std::cout << "Built " << edgeCount << " edges." << std::endl;
 
     // allocate & fill edgeList in parallel (EV)
-    std::unique_ptr<EV_Data> EV = make_EV(*tv_relationship,
-                                          *(edgeTable.get()),
-                                          edgeCount,
-                                          args);
+    std::unique_ptr<EV_Data> EV = elective_make_EV(*tv_relationship,
+                                                   *(edgeTable.get()),
+                                                   edgeCount,
+                                                   args);
 
     // we can also get edgeStars from cellEdgeList (ET)
-    std::unique_ptr<ET_Data> ET = make_ET(*(cellEdgeList.get()),
-                                          edgeCount,
-                                          args);
+    std::unique_ptr<ET_Data> ET = elective_make_ET(*(cellEdgeList.get()),
+                                                   edgeCount,
+                                                   args);
 
-    // before the extraction, we have TV relation
-    // after the extraction, we now have TE, VE, EV and ET relations
-    std::cout << "Built " << edgeCount << " edges." << std::endl;
+    // Make faces, which we define based on cells and vertices so we simultaneously define TF and FV
+    std::cout << "Building faces..." << std::endl;
+    std::unique_ptr<TF_Data> cellFaceList = std::make_unique<TF_Data>(tv_relationship->nCells);
+    std::unique_ptr<VF_Data> faceTable = std::make_unique<VF_Data>();
+    faceTable.get()->resize(tv_relationship->nPoints); // guarantee space AND make indexing valid
+    vtkIdType faceCount = make_TF_and_VF(*tv_relationship,
+                                         *(cellFaceList.get()),
+                                         *(faceTable.get()));
+    std::cout << "Built " << faceCount << " faces." << std::endl;
 
     return 0;
 }
