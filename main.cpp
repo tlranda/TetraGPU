@@ -8,19 +8,19 @@
 #include <vtkUnstructuredGrid.h>
 #include <vtkXMLUnstructuredGridReader.h>
 
-// Argument values to be stored here
+// Argument values to be stored here, with defaults if they are optional
 typedef struct argstruct {
     std::string fileName;
     int threadNumber = 1;
 } arguments;
 // Getopt option declarations
+const char * optionstring = "hi:t:";
 static struct option long_options[] = {
     {"help", no_argument, 0, 'h'},
     {"input", required_argument, 0, 'i'},
     {"threads", required_argument, 0, 't'},
     {0,0,0,0}
 };
-const char * optionstring = "hi:t:";
 
 void parse(int argc, char *argv[], arguments& args) {
     /*
@@ -116,6 +116,36 @@ int checkCellTypes(vtkPointSet *object) {
     return 0;
 }
 
+/*
+ * Data types for relationships and retrieved data
+ * TV relationship: TV_Data
+ * Cell: vtkIDType (from VTK, integer-type)
+ * Vertex: vtkIDType (from VTK, integer-type)
+ * Edge: EdgeData (high vertex & edge ID (arbitrarily enumerated))
+ * TE relationship: TE_Data (map cell ID to its 6 edge IDs)
+ * EV relationship: EV_Data (map edge ID to its 2 vertex IDs)
+ * ET relationship: ET_Data (map edge ID to an arbitrary number of cell IDs)
+ * VE relationship: VE_Data (map low vertex ID to edge data including other vertex)
+ */
+/*
+    From here we can dynamically compute:
+    VV = TV' * TV
+    VE (precomputed)
+            VF = --not defined--
+    VT = TV'
+    EV (precomputed)
+    EE = EV * VE
+            EF = --not defined--
+    ET (precomputed)
+            FV = --not defined--
+            FE = --not defined--
+            FF = --not defined--
+            FT = --not defined--
+    TV (defined from storage)
+    TE (precomputed)
+            TF = --not defined--
+    TT = TV * TV'
+*/
 typedef struct TV_from_VTK {
     vtkIdType nPoints, nCells;
     // For some reason, vector of array is experimentally 20x faster than unique_ptr?
@@ -126,11 +156,24 @@ typedef struct TV_from_VTK {
         nPoints = _points;
         nCells = _cells;
         //cells = std::make_unique<vtkIdType[]>(_points * _cells);
-        cells.reserve(nCells);
+        cells.resize(nCells);
     }
-} TV_data;
+} TV_Data;
+struct EdgeData {
+    vtkIdType highVert = 0, // edge's higher vertex id
+              id = 0;       // edge's id
+    EdgeData(vtkIdType hv, vtkIdType i) : highVert{hv}, id{i} {}
+};
+typedef std::vector<std::array<vtkIdType,6>> TE_Data;
+typedef std::vector<std::array<vtkIdType,2>> EV_Data;
+typedef std::vector<std::vector<vtkIdType>> ET_Data;
+typedef std::vector<std::vector<EdgeData>> VE_Data;
 
-std::unique_ptr<TV_data> get_TV_from_VTK(arguments args) {
+/*
+ * Relationship extracting functions
+ */
+
+std::unique_ptr<TV_Data> get_TV_from_VTK(const arguments args) {
     // VTK loads the file data
     vtkSmartPointer<vtkXMLUnstructuredGridReader> reader =
         vtkSmartPointer<vtkXMLUnstructuredGridReader>::New();
@@ -177,6 +220,7 @@ std::unique_ptr<TV_data> get_TV_from_VTK(arguments args) {
         std::cout << "Dataset loaded with " << nCells << " tetrahedra and " <<
                      nPoints << " vertices" << std::endl;
     }
+
     // connectivity array stores vertex indices of each cell (e.g., tetrahedron)
     // it can be viewed as the TV relation
     //
@@ -184,7 +228,7 @@ std::unique_ptr<TV_data> get_TV_from_VTK(arguments args) {
     // so it's usually a long long int, but may downscale to long int or int
     // You can check the VTK defined symbols VTK_ID_TYPE_IMPL,
     // VTK_SIZEOF_ID_TYPE, VTK_ID_MIN, VTK_ID_MAX, VTK_ID_TYPE_PRId to confirm
-    // (Based on Common/Core/vtkType.h:{295-321})
+    // (Based on <VTK_INSTALL>/Common/Core/vtkType.h:{295-321})
     vtkIdType * connectivity = static_cast<vtkIdType *>(cells->GetConnectivityArray()->GetVoidPointer(0));
     // offsets array tells the starting index of a cell in the connectivity array
     vtkIdType * offsets = static_cast<vtkIdType *>(cells->GetOffsetsArray()->GetVoidPointer(0));
@@ -193,7 +237,7 @@ std::unique_ptr<TV_data> get_TV_from_VTK(arguments args) {
     // are always 4*index, ie offsets[0] = 0, offsets[1] = 4, offsets[4] = 16
 
     // Transfer into simpler data structure with unique ownership
-    std::unique_ptr<TV_data> data = std::make_unique<TV_data>(nPoints, nCells);
+    std::unique_ptr<TV_Data> data = std::make_unique<TV_Data>(nPoints, nCells);
     #pragma omp parallel for num_threads(args.threadNumber)
     for (vtkIdType cellIndex = 0; cellIndex < nCells; cellIndex++) {
         for (int vertexIndex = 0; vertexIndex < 4; vertexIndex++) {
@@ -205,21 +249,51 @@ std::unique_ptr<TV_data> get_TV_from_VTK(arguments args) {
     return data;
 }
 
-struct EdgeData {
-    // the id of the edge higher vertex
-    int highVert = 0;
-    // the edge id
-    int id = 0;
-    EdgeData(int hv, int i) : highVert{hv}, id{i} {}
-};
-
-std::unique_ptr<std::vector<std::array<int,2>>> make_EV(std::unique_ptr<TV_data> tv_relationship,
-                                                        std::vector<std::vector<EdgeData>> edgeTable,
-                                                        vtkIdType n_edges, arguments args) {
-    std::unique_ptr<std::vector<std::array<int, 2>>> edgeList = std::make_unique<std::vector<std::array<int,2>>>();
-    edgeList->reserve(n_edges); // EV
+vtkIdType make_TE_and_VE(const TV_Data tv_relationship,
+                         TE_Data cellEdgeList,
+                         VE_Data edgeTable
+                         ) {
+    const int nbVertsInCell = 4; // tetrahedron; verifiable via VTK offsets[1]-offsets[0]
+    vtkIdType edgeCount = 0;
+    // SIMULTANEOUSLY define TE and VE
+    for(vtkIdType cid = 0; cid < tv_relationship.nCells; cid++) {
+        // id of edge in cell
+        vtkIdType ecid = 0;
+        // TE case: {0-1}, {0-2}, {0-3}, {1-2}, {1-3}, {2-3}
+        for(int j = 0; j <= nbVertsInCell - 2; j++) {
+            for(int k = j + 1; k <= nbVertsInCell - 1; k++) {
+                // edge processing
+                // enforce lower vertex id as first element
+                vtkIdType v0 = tv_relationship.cells[cid][j], //[(4*cid)+j],
+                          v1 = tv_relationship.cells[cid][k]; //[(4*cid)+k];
+                if(v0 > v1) std::swap(v0, v1);
+                // We will store edges incident to lower vertex here
+                std::vector<EdgeData> &vec = edgeTable[v0];
+                // Scan all edges currently stored incident to this basis vertex
+                const auto pos = std::find_if(vec.begin(), vec.end(),
+                                 [&](const EdgeData &a) { return a.highVert == v1; });
+                if(pos == vec.end()) {
+                    // not found in edgeTable: new edge for VE
+                    vec.emplace_back(EdgeData(v1, edgeCount));
+                    cellEdgeList[cid][ecid] = edgeCount;
+                    edgeCount++;
+                }
+                // found an existing edge, but mark it for TE
+                else cellEdgeList[cid][ecid] = pos->id;
+                ecid++;
+            }
+        }
+    }
+    return edgeCount;
+}
+std::unique_ptr<EV_Data> make_EV(const TV_Data tv_relationship,
+                                 const VE_Data edgeTable,
+                                 const vtkIdType n_edges,
+                                 const arguments args
+                                 ) {
+    std::unique_ptr<EV_Data> edgeList = std::make_unique<EV_Data>(n_edges);
     #pragma omp parallel for num_threads(args.threadNumber)
-    for(int i = 0; i < tv_relationship->nPoints; ++i) {
+    for(vtkIdType i = 0; i < tv_relationship.nPoints; ++i) {
         for(const EdgeData &data : edgeTable[i]) {
             (*edgeList)[data.id] = {i, data.highVert};
         }
@@ -227,16 +301,15 @@ std::unique_ptr<std::vector<std::array<int,2>>> make_EV(std::unique_ptr<TV_data>
     return edgeList;
 }
 
-std::unique_ptr<std::vector<std::vector<int>>> make_ET(std::unique_ptr<std::vector<std::array<int, 6>>> cellEdgeList,
-                                                       vtkIdType n_edges,
-                                                       arguments args
-                                                       ) {
-    std::unique_ptr<std::vector<std::vector<int>>> edgeStars = std::make_unique<std::vector<std::vector<int>>>();
-    edgeStars->reserve(n_edges); // ET
+std::unique_ptr<ET_Data> make_ET(const TE_Data cellEdgeList,
+                                 const vtkIdType n_edges,
+                                 const arguments args
+                                 ) {
+    std::unique_ptr<ET_Data> edgeStars = std::make_unique<ET_Data>(n_edges);
     #pragma omp parallel for num_threads(args.threadNumber)
-    for(size_t i = 0; i < cellEdgeList->size(); ++i) { // for each tetrahedron
-        // std::array<int,6> list of edges for tetra
-        for(const int eid : (*cellEdgeList)[i]) { // for each edge
+    for(vtkIdType i = 0; i < cellEdgeList.size(); ++i) { // for each tetrahedron
+        // std::array<vtkIdType,6> list of edges for tetra
+        for(const vtkIdType eid : cellEdgeList[i]) { // for each edge
             (*edgeStars)[eid].emplace_back(i); // edge :: tetra
         }
     }
@@ -249,89 +322,32 @@ int main(int argc, char *argv[]) {
 
     std::cout << "Parsing vtu file: " << args.fileName << std::endl;
     // Should utilize VTK API and then de-allocate all of its heap
-    std::unique_ptr<TV_data> tv_relationship = get_TV_from_VTK(args);
+    std::unique_ptr<TV_Data> tv_relationship = get_TV_from_VTK(args);
 
     // Example of building edge list from the cell (tetra) array
     // This should be the VE relation, but we can simultaneously determine TE since we are creating edges arbitrarily based on TV
     // Adapted from TTK Explicit Triangulation
     std::cout << "Building edges..." << std::endl;
-    std::unique_ptr<std::vector<std::array<int, 6>>> cellEdgeList = std::make_unique<std::vector<std::array<int, 6>>>(); // TE
-    cellEdgeList->reserve(tv_relationship->nCells);
+    std::unique_ptr<TE_Data> cellEdgeList = std::make_unique<TE_Data>(tv_relationship->nCells); // TE
+    std::unique_ptr<VE_Data> edgeTable = std::make_unique<VE_Data>(tv_relationship->nPoints); // VE
+    vtkIdType edgeCount = make_TE_and_VE(*tv_relationship,
+                                         *(cellEdgeList.get()),
+                                         *(edgeTable.get()));
 
-    // for each vertex, a vector of EdgeData, aka the VE relationship
-    std::vector<std::vector<EdgeData>> edgeTable(tv_relationship->nPoints); // VE
-
-    vtkIdType edgeCount = 0;
-
-    const int nbVertsInCell = 4; //offsets[1] - offsets[0]; // should be 4 for a tetrahedron
-    // std::cout << "Number of vertices in a cell: " << nbVertsInCell << std::endl;
-    //
-    // SIMULTANEOUSLY define TE and VE
-    //
-    for(int cid = 0; cid < tv_relationship->nCells; cid++) {
-        // id of edge in cell
-        int ecid = 0;
-        // tet case: {0-1}, {0-2}, {0-3}, {1-2}, {1-3}, {2-3}
-        for(int j = 0; j <= nbVertsInCell - 2; j++) {
-            for(int k = j + 1; k <= nbVertsInCell - 1; k++) {
-                // edge processing
-                // enforce lower vertex id as first element
-                int v0 = tv_relationship->cells[cid][j]; //connectivity[offsets[cid] + j];
-                int v1 = tv_relationship->cells[cid][k]; //connectivity[offsets[cid] + k];
-                //int v0 = tv_relationship->cells[(4*cid)+j]; //connectivity[offsets[cid] + j];
-                //int v1 = tv_relationship->cells[(4*cid)+k]; //connectivity[offsets[cid] + k];
-                if(v0 > v1) std::swap(v0, v1);
-                // We will store edges incident to lower vertex here
-                std::vector<EdgeData> &vec = edgeTable[v0];
-                // Scan all edges currently stored incident to this basis vertex
-                const auto pos = std::find_if(vec.begin(), vec.end(),
-                                 [&](const EdgeData &a) { return a.highVert == v1; });
-                if(pos == vec.end()) {
-                    // not found in edgeTable: new edge for VE
-                    vec.emplace_back(EdgeData(v1, edgeCount));
-                    // New edge for TE
-                    (*cellEdgeList)[cid][ecid] = edgeCount;
-                    edgeCount++;
-                } else {
-                    // found an existing edge, but mark it for TE
-                    (*cellEdgeList)[cid][ecid] = pos->id;
-                }
-                ecid++;
-            }
-        }
-    }
-
-    // allocate & fill edgeList in parallel
-    std::unique_ptr<std::vector<std::array<int,2>>> EV = make_EV(std::move(tv_relationship),
-                                                                 edgeTable,
-                                                                 edgeCount,
-                                                                 args);
+    // allocate & fill edgeList in parallel (EV)
+    std::unique_ptr<EV_Data> EV = make_EV(*tv_relationship,
+                                          *(edgeTable.get()),
+                                          edgeCount,
+                                          args);
 
     // we can also get edgeStars from cellEdgeList (ET)
-    std::unique_ptr<std::vector<std::vector<int>>> ET = make_ET(std::move(cellEdgeList),
-                                                                edgeCount,
-                                                                args);
+    std::unique_ptr<ET_Data> ET = make_ET(*(cellEdgeList.get()),
+                                          edgeCount,
+                                          args);
 
     // before the extraction, we have TV relation
     // after the extraction, we now have TE, VE, EV and ET relations
     std::cout << "Built " << edgeCount << " edges." << std::endl;
-    // From here we can dynamically compute:
-    // VV = TV' * TV
-    // VE (precomputed)
-    // VF = --not defined--
-    // VT = TV'
-    // EV (precomputed)
-    // EE = EV * VE
-    // EF = --not defined--
-    // ET (precomputed)
-    // FV = --not defined--
-    // FE = --not defined--
-    // FF = --not defined--
-    // FT = --not defined--
-    // TV (precomputed)
-    // TE (precomputed)
-    // TF = --not defined--
-    // TT = TV * TV'
 
     return 0;
 }
