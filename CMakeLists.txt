@@ -39,7 +39,9 @@ message(STATUS "VTK_VERSION: ${VTK_VERSION}")
 message("VTK_DIR: ${VTK_DIR}")
 # message("VTK_LIBRARIES: ${VTK_LIBRARIES}")
 
-add_executable(main main.cpp)
+file(GLOB sources src/*.cpp)
+add_executable(main ${sources})
 target_compile_options(main PRIVATE -g -O0)
 target_link_libraries(main PRIVATE VTK::IOXML)
+target_include_directories(main PRIVATE include)
 
