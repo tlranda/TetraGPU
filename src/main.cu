@@ -2,6 +2,12 @@
 #include "argparse.h" // arguments type and parse()
 #include "vtk_load.h" // TV_Data type and get_TV_from_VTK()
 #include "cpu_extraction.h" // *_Data types and make_*() / elective_make_*()
+#include "cuda_extraction.h"
+
+__global__ void kernel(void) {
+    int tid = threadIdx.x;
+    printf("%d\n", tid);
+}
 
 int main(int argc, char *argv[]) {
     arguments args;
@@ -42,6 +48,12 @@ int main(int argc, char *argv[]) {
                                          *(faceTable.get()));
     std::cout << "Built " << faceCount << " faces." << std::endl;
 
+    kernel<<<10,120993240>>>();
+    DUMMY_WARN
+    //KERNEL_WARN();
+    //CUDA_WARN(
+    cudaDeviceSynchronize();
+    //);
     return 0;
 }
 

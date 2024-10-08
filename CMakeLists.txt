@@ -3,13 +3,41 @@ cmake_minimum_required(VERSION 3.12 FATAL_ERROR)
 project(tetra_topo
     VERSION 0.0.1
     DESCRIPTION "GPU Tetrahedron Mesh Processing"
-    LANGUAGES CXX)
+    LANGUAGES CXX CUDA)
 
+file(GLOB sources src/*.cu src/*.cpp)
+add_executable(main ${sources})
+
+# N01 has a whack installation that has to be adjusted
+execute_process(COMMAND hostname
+                OUTPUT_VARIABLE HOSTNAME
+                OUTPUT_STRIP_TRAILING_WHITESPACE)
+if (HOSTNAME STREQUAL "n01")
+    message(STATUS "Adding custom NVIDIA setup for n01")
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS}")
+    include_directories(/usr/local/cuda-12.2/include /home/tlranda/tools/gcc7/include/c++/7.5.0 /home/tlranda/tools/gcc7/include/c++/7.5.0/x86_64-pc-linux-gnu)
+    link_directories(/usr/local/cuda-12.2/libnvvp /usr/local/cuda-12.2/lib64 /home/tlranda/tools/gcc7/lib)
+    target_link_libraries(main PRIVATE -L/home/tlranda/tools/gcc7/lib -lstdc++)
+else()
+    message(STATUS "Not host 'n01', no ccbin aded")
+    find_package(CUDA PATHS /usr/local/)
+    if(NOT CUDA_FOUND)
+        message("CUDA INSTALLATION NOT FOUND!")
+        return()
+    endif()
+    include_directories(${CUDA_INCLUDE_DIRS})
+    link_directories(${CUDA_LIBRARY_DIRS})
+endif()
+
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CUDA_STANDARD 11)
 set(CMAKE_THREAD_LIBS_INIT "-lpthread")
 set(CMAKE_HAVE_THREADS_LIBRARY 1)
 set(CMAKE_USE_WIN32_THREADS_INIT 0)
 set(CMAKE_USE_PTHREADS_INIT 1)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
+set(CUDA_SEPARABLE_COMPILATION ON)
+set(CMAKE_CUDA_ARCHITECTURES "60;61;62;70")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # Set a default build type if none was specified
@@ -29,19 +57,20 @@ endif()
 
 find_package(VTK PATHS ~/usr/local)
 find_package(VTK)
-
 if(NOT VTK_FOUND)
     message("VTK NOT FOUND!")
     return()
 endif()
-
 message(STATUS "VTK_VERSION: ${VTK_VERSION}")
 message("VTK_DIR: ${VTK_DIR}")
 # message("VTK_LIBRARIES: ${VTK_LIBRARIES}")
 
-file(GLOB sources src/*.cpp)
-add_executable(main ${sources})
-target_compile_options(main PRIVATE -g -O0)
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_options(main PRIVATE -g -O0)
+else()
+    target_compile_options(main PRIVATE -O3)
+endif()
 target_link_libraries(main PRIVATE VTK::IOXML)
 target_include_directories(main PRIVATE include)
+install(TARGETS main)
 
