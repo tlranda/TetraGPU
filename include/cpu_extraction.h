@@ -2,7 +2,7 @@
 #define TETRA_CPU_RELATIONS
 
 #include <algorithm> // std::sort
-#include "vtk_load.h"
+#include "vtk_load.h" // TV_Data type
 
 /*
  * Data types for relationships and retrieved data
@@ -64,26 +64,26 @@ typedef std::vector<std::vector<FaceData>> VF_Data;
 typedef std::vector<std::array<vtkIdType,nbVertsInEdge>> EV_Data;
 typedef std::vector<std::vector<vtkIdType>> ET_Data;
 
-vtkIdType make_TE_and_VE(const TV_Data tv_relationship,
-                         TE_Data cellEdgeList,
-                         VE_Data edgeTable
+vtkIdType make_TE_and_VE(const TV_Data & tv_relationship,
+                         TE_Data & cellEdgeList,
+                         VE_Data & edgeTable
                          );
-std::unique_ptr<EV_Data> elective_make_EV(const TV_Data tv_relationship,
-                                          const VE_Data edgeTable,
+std::unique_ptr<EV_Data> elective_make_EV(const TV_Data & tv_relationship,
+                                          const VE_Data & edgeTable,
                                           const vtkIdType n_edges,
                                           const arguments args
                                          );
-std::unique_ptr<ET_Data> elective_make_ET(const TE_Data cellEdgeList,
+std::unique_ptr<ET_Data> elective_make_ET(const TE_Data & cellEdgeList,
                                           const vtkIdType n_edges,
                                           const arguments args
                                          );
-std::unique_ptr<ET_Data> elective_make_ET(const TE_Data cellEdgeList,
+std::unique_ptr<ET_Data> elective_make_ET(const TE_Data & cellEdgeList,
                                           const vtkIdType n_edges,
                                           const arguments args
                                          );
-vtkIdType make_TF_and_VF(const TV_Data tv_relationship,
-                         TF_Data cellFaceList,
-                         VF_Data faceTable
+vtkIdType make_TF_and_VF(const TV_Data & tv_relationship,
+                         TF_Data & cellFaceList,
+                         VF_Data & faceTable
                         );
 #endif
 

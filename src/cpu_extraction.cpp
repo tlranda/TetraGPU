@@ -4,9 +4,9 @@
  * Relationship extracting functions
  */
 
-vtkIdType make_TE_and_VE(const TV_Data tv_relationship,
-                         TE_Data cellEdgeList,
-                         VE_Data edgeTable
+vtkIdType make_TE_and_VE(const TV_Data & tv_relationship,
+                         TE_Data & cellEdgeList,
+                         VE_Data & edgeTable
                          ) {
     vtkIdType edgeCount = 0;
     // SIMULTANEOUSLY define TE and VE
@@ -41,8 +41,8 @@ vtkIdType make_TE_and_VE(const TV_Data tv_relationship,
     return edgeCount;
 }
 
-std::unique_ptr<EV_Data> elective_make_EV(const TV_Data tv_relationship,
-                                          const VE_Data edgeTable,
+std::unique_ptr<EV_Data> elective_make_EV(const TV_Data & tv_relationship,
+                                          const VE_Data & edgeTable,
                                           const vtkIdType n_edges,
                                           const arguments args
                                          ) {
@@ -56,7 +56,7 @@ std::unique_ptr<EV_Data> elective_make_EV(const TV_Data tv_relationship,
     return edgeList;
 }
 
-std::unique_ptr<ET_Data> elective_make_ET(const TE_Data cellEdgeList,
+std::unique_ptr<ET_Data> elective_make_ET(const TE_Data & cellEdgeList,
                                           const vtkIdType n_edges,
                                           const arguments args
                                          ) {
@@ -71,9 +71,9 @@ std::unique_ptr<ET_Data> elective_make_ET(const TE_Data cellEdgeList,
     return edgeStars;
 }
 
-vtkIdType make_TF_and_VF(const TV_Data tv_relationship,
-                         TF_Data cellFaceList,
-                         VF_Data faceTable
+vtkIdType make_TF_and_VF(const TV_Data & tv_relationship,
+                         TF_Data & cellFaceList,
+                         VF_Data & faceTable
                         ) {
     vtkIdType faceCount = 0;
     // SIMULTANEOUSLY define TF and VF
