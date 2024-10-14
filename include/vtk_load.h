@@ -21,6 +21,19 @@ struct TV_Data {
         //cells = std::make_unique<vtkIdType[]>(_points * _cells);
         cells.resize(nCells);
     }
+
+    std::vector<std::array<vtkIdType,nbVertsInCell>>::iterator begin() {
+        return cells.begin();
+    }
+    std::vector<std::array<vtkIdType,nbVertsInCell>>::const_iterator begin() const {
+        return cells.begin();
+    }
+    std::vector<std::array<vtkIdType,nbVertsInCell>>::iterator end() {
+        return cells.end();
+    }
+    std::vector<std::array<vtkIdType,nbVertsInCell>>::const_iterator end() const {
+        return cells.end();
+    }
 };
 
 int checkCellTypes(vtkPointSet *object);

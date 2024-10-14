@@ -12,4 +12,6 @@ std::unique_ptr<EV_Data> make_EV_GPU(const TV_Data & tv_relationship,
                                      const vtkIdType n_edges,
                                      const arguments args);
 
+vtkIdType * make_TV_for_GPU(const TV_Data & tv_relationship);
+
 #endif

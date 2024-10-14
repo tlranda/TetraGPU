@@ -65,7 +65,7 @@ int main(int argc, char *argv[]) {
     {
         std::cout << "Using GPU to compute EV" << std::endl;
         std::unique_ptr<EV_Data> device_EV = make_EV_GPU(*tv_relationship,
-                                                         *edgeTable,
+                                                         *EV,
                                                          edgeCount,
                                                          args);
         if(check_host_vs_device_EV(*EV, *device_EV)) {
