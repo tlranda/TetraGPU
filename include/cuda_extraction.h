@@ -12,6 +12,13 @@ std::unique_ptr<EV_Data> make_EV_GPU(const TV_Data & tv_relationship,
                                      const vtkIdType n_edges,
                                      const arguments args);
 
-vtkIdType * make_TV_for_GPU(const TV_Data & tv_relationship);
+void make_TV_for_GPU(vtkIdType * device_tv,
+                     const TV_Data & tv_relationship);
+
+void make_VE_for_GPU(vtkIdType * device_ve,
+                     vtkIdType * device_offset,
+                     const VE_Data & ve_relationship,
+                     const vtkIdType n_edges,
+                     const vtkIdType n_verts);
 
 #endif
