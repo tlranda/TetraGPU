@@ -29,8 +29,7 @@ vtkIdType make_TE_and_VE(const TV_Data & tv_relationship,
                 if(pos == vec.end()) {
                     // not found in edgeTable: new edge for VE
                     vec.emplace_back(EdgeData(v1, edgeCount));
-                    cellEdgeList[cid][ecid] = edgeCount;
-                    edgeCount++;
+                    cellEdgeList[cid][ecid] = edgeCount++;
                 }
                 // found an existing edge, but mark it for TE
                 else cellEdgeList[cid][ecid] = pos->id;

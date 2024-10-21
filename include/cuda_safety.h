@@ -26,6 +26,7 @@ inline void cudaAssert(const char* file, int line, cudaError_t code, const char*
 #define CUDA_ASSERT(code) { cudaAssert(__FILE__, __LINE__, code, nullptr, CUDA_SAFETY_EXIT); }
 #define CUDA_ASSERT_MSG(code, msg) { cudaAssert(__FILE__, __LINE__, code, msg, CUDA_SAFETY_EXIT); }
 
+#define KERNEL_LAUNCH_SEPARATOR ,
 inline void kernelWarn(const char* file, int line, const char* debug) {
     cudaError_t code = cudaGetLastError();
     if (code != cudaSuccess) {
@@ -39,10 +40,10 @@ inline void kernelAssert(const char* file, int line, const char* debug, bool abo
     kernelAssert(file, line, debug, false);
     if(abort) exit(EXIT_FAILURE);
 }
-#define KERNEL_WARN() { kernelWarn(__FILE__, __LINE__, nullptr); }
-#define KERNEL_WARN_MSG(msg) { kernelWarn(__FILE__, __LINE__, msg); }
-#define KERNEL_ASSERT() { kernelAssert(__FILE__, __LINE__, nullptr, CUDA_SAFETY_EXIT); }
-#define KERNEL_ASSERT_MSG(msg) { kernelAssert(__FILE__, __LINE__, msg, CUDA_SAFETY_EXIT); }
+#define KERNEL_WARN(kernel) { kernel; kernelWarn(__FILE__, __LINE__, nullptr); }
+#define KERNEL_WARN_MSG(kernel, msg) { kernel; kernelWarn(__FILE__, __LINE__, msg); }
+#define KERNEL_ASSERT(kernel) { kernel; kernelAssert(__FILE__, __LINE__, nullptr, CUDA_SAFETY_EXIT); }
+#define KERNEL_ASSERT_MSG(kernel, msg) { kernel; kernelAssert(__FILE__, __LINE__, msg, CUDA_SAFETY_EXIT); }
 
 inline void dummyWarn(const char* file, int line) {
     std::cout << "Dummy warning from " << file << ":" << line << std::endl;
