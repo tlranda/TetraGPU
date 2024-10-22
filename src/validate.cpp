@@ -14,20 +14,40 @@ bool check_host_vs_device_EV(const EV_Data host_EV,
     unsigned int idx = 0,
                  n_printed = 0,
                  n_failures = 0,
+                 n_inverted = 0,
                  n_failures_before_early_exit = 0,
                  n_failures_to_print = 10;
     for (const auto EV_Array : host_EV) {
         if (idx % 1000 == 0)
-            std::cerr << "Process edge " << idx << std::endl;
+            std::cerr << "Process edge " << idx << " (" << n_failures
+                      << " failures so far "
+                      << 100 * n_failures / static_cast<float>(idx)
+                      << " % | " << n_inverted << " inverted edges found "
+                      << 100 * n_inverted / static_cast<float>(idx)
+                      << " %)" << std::endl;
         idx++;
         auto index = std::find(begin(device_EV), end(device_EV), EV_Array);
         if (index == std::end(device_EV)) {
-            n_failures++;
-            if (n_failures <= n_failures_to_print)
-                std::cerr << "Could not find edge (" << EV_Array[0] << ", "
-                          << EV_Array[1] << ") in device EV!" << std::endl;
-            if (n_failures_before_early_exit > 0 &&
-                n_failures >= n_failures_before_early_exit) return false;
+            // Look for inverted edge
+            std::array<vtkIdType,nbVertsInEdge> reversed_edge{EV_Array[1], EV_Array[0]};
+            index = std::find(begin(device_EV), end(device_EV), reversed_edge);
+            if (index == std::end(device_EV)){
+                n_failures++;
+                if (n_failures <= n_failures_to_print)
+                    std::cerr << "Could not find edge (" << EV_Array[0] << ", "
+                              << EV_Array[1] << ") in device EV!" << std::endl;
+                if (n_failures_before_early_exit > 0 &&
+                    n_failures >= n_failures_before_early_exit) return false;
+            }
+            else {
+                n_inverted++;
+                if (n_printed < 10) {
+                    std::cout << "Matched INVERTED edge between host and device ("
+                              << reversed_edge[0] << ", " << reversed_edge[1] << ")"
+                              << std::endl;
+                    n_printed++;
+                }
+            }
         }
         else {
             if (n_printed < 10) {
