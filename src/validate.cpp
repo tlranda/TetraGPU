@@ -63,4 +63,3 @@ bool check_host_vs_device_EV(const EV_Data host_EV,
     return n_failures == 0;
 }
 
-

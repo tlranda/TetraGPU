@@ -70,9 +70,10 @@ __global__ void EV_kernel(vtkIdType * __restrict__ vertices,
                           vtkIdType * __restrict__ edges,
                           const vtkIdType n_edges,
                           vtkIdType * __restrict__ ev) {
-    vtkIdType tid = (blockDim.x * blockIdx.x) + threadIdx.x;
-    if (tid >= n_edges * nbVertsInEdge) return;
-    ev[edges[tid]] = vertices[tid];
+    vtkIdType tid = (blockDim.x * blockIdx.x) + threadIdx.x,
+              hi_vert = (tid % 2);
+    if (tid >= (n_edges * nbVertsInEdge)) return;
+    ev[(edges[tid] * nbVertsInEdge) + hi_vert] = vertices[tid];
 }
 
 // vector of array of vertices in an edge

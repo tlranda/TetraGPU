@@ -13,6 +13,11 @@ Build
 
 Dataset
 * Supply a VTK-compatible tetrahedral XML unstructured grid file (.vtu)
+* Alternatively, with Python3's [meshio, numpy and tqdm] dependencies, you can
+run `python3 make_mesh.py --help` to see how to generate a simple mesh
 
 Run
-* `$ ./bin/main --input <path/to/vtu_file.vtu>`
+* Generally: `$ ./bin/main --input <path/to/vtu_file.vtu>`
+* If you want to utilize my testing framework, use `$ ./test.sh <each .vtu you want to test>`
+* For debugging, use `$ ./debug.sh`
+
