@@ -7,6 +7,8 @@
 #include <iostream>
 #include <iomanip>
 
+#include "emoji.h"
+
 typedef std::chrono::time_point<std::chrono::system_clock> ClockReading;
 #define get_clock std::chrono::system_clock::now
 

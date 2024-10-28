@@ -6,6 +6,11 @@
 #include "cuda_extraction.h" // make_*_GPU()
 #include "validate.h" // check_host_vs_device_*()
 #include "metrics.h" // Timer class
+#include "emoji.h" // Emoji definitions
+
+__global__ void dummy_kernel(void) {
+    int tid = (blockIdx.x * blockDim.x) + threadIdx.x;
+}
 
 int main(int argc, char *argv[]) {
     Timer timer;
@@ -14,7 +19,20 @@ int main(int argc, char *argv[]) {
     timer.tick();
     timer.interval("Argument parsing");
 
-    std::cout << "Parsing vtu file: " << args.fileName << std::endl;
+    {
+        timer.label_next_interval("GPU context creation with dummy kernel");
+        timer.tick();
+        KERNEL_WARN(dummy_kernel<<<1 KERNEL_LAUNCH_SEPARATOR 1>>>());
+        CUDA_ASSERT(cudaDeviceSynchronize());
+        timer.tick_announce();
+        timer.label_next_interval("GPU trivial kernel launch");
+        timer.tick();
+        KERNEL_WARN(dummy_kernel<<<1 KERNEL_LAUNCH_SEPARATOR 1>>>());
+        CUDA_ASSERT(cudaDeviceSynchronize());
+        timer.tick_announce();
+    }
+
+    std::cout << PUSHPIN_EMOJI << "Parsing vtu file: " << args.fileName << std::endl;
     timer.label_next_interval("TV from VTK");
     timer.tick();
     // Should utilize VTK API and then de-allocate all of its heap
@@ -22,7 +40,7 @@ int main(int argc, char *argv[]) {
     timer.tick_announce();
 
     // Adapted from TTK Explicit Triangulation
-    std::cout << "Building edges..." << std::endl;
+    std::cout << PUSHPIN_EMOJI << "Building edges..." << std::endl;
     timer.label_next_interval("TE and VE [CPU]");
     timer.tick();
     std::unique_ptr<TE_Data> cellEdgeList = std::make_unique<TE_Data>(tv_relationship->nCells);
@@ -32,7 +50,7 @@ int main(int argc, char *argv[]) {
                                          *cellEdgeList,
                                          *edgeTable);
     timer.tick_announce();
-    std::cout << "Built " << edgeCount << " edges." << std::endl;
+    std::cout << OK_EMOJI << "Built " << edgeCount << " edges." << std::endl;
 
     // Scope to de-allocate unique ptrs
     {
@@ -45,7 +63,7 @@ int main(int argc, char *argv[]) {
                                                        args);
         timer.tick_announce();
 
-        std::cout << "Using GPU to compute EV" << std::endl;
+        std::cout << PUSHPIN_EMOJI << "Using GPU to compute EV" << std::endl;
         timer.label_next_interval("EV [GPU]");
         timer.tick();
         std::unique_ptr<EV_Data> device_EV = make_EV_GPU(*edgeTable,
@@ -57,16 +75,16 @@ int main(int argc, char *argv[]) {
         timer.label_next_interval("Validate GPU EV");
         timer.tick();
         if(check_host_vs_device_EV(*EV, *device_EV)) {
-            std::cout << "GPU EV results validated by CPU" << std::endl;
+            std::cout << OK_EMOJI << "GPU EV results validated by CPU" << std::endl;
         }
         else {
-            std::cerr << "ALERT! GPU EV results do NOT match CPU results!" << std::endl;
+            std::cerr << EXCLAIM_EMOJI << "ALERT! GPU EV results do NOT match CPU results!" << std::endl;
         }
         timer.tick_announce();
         #endif
     }
 
-    std::cout << "--Should not auto-print timers past this point--" << std::endl;
+    std::cout << FLAG_EMOJI << "--Should not auto-print timers past this point--" << std::endl;
     // Scope to de-allocate unique ptrs
     {
         timer.label_next_interval("ET [CPU]");
@@ -78,7 +96,7 @@ int main(int argc, char *argv[]) {
         timer.tick();
     }
     // Make faces, which we define based on cells and vertices so we simultaneously define TF and FV
-    std::cout << "Building faces..." << std::endl;
+    std::cout << PUSHPIN_EMOJI << "Building faces..." << std::endl;
     timer.label_next_interval("TF and VF [CPU]");
     timer.tick();
     std::unique_ptr<TF_Data> cellFaceList = std::make_unique<TF_Data>(tv_relationship->nCells);
@@ -88,7 +106,7 @@ int main(int argc, char *argv[]) {
                                          *cellFaceList,
                                          *faceTable);
     timer.tick();
-    std::cout << "Built " << faceCount << " faces." << std::endl;
+    std::cout << OK_EMOJI << "Built " << faceCount << " faces." << std::endl;
     timer.tick(); // bonus tick -- open interval
 
     return 0;

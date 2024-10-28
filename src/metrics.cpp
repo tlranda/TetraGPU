@@ -46,6 +46,7 @@ void Timer::interval(int idx) {
 
     // Early-exit: Interval is not closed
     if (idx >= this->open_interval) {
+        std::cerr << EXCLAIM_EMOJI;
         if (label == this->labels.end()) std::cerr << "Interval " << idx;
         else std::cerr << label->second;
         std::cerr << " cannot be reported until it is closed" << std::endl;
@@ -61,10 +62,11 @@ void Timer::interval(int idx) {
     auto elapsed_subsec = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
     elapsed_subsec = elapsed_subsec % 1'000'000;
 
+    std::cout << HOURGLASS_EMOJI;
     if (label == this->labels.end())
-        std::cout << "⏳ Elapsed time for interval " << idx << "(" << (idx<<1)
+        std::cout << "Elapsed time for interval " << idx << "(" << (idx<<1)
                   << ", " << (idx<<1|1) << ")" << ": ";
-    else std::cout << "⏳ " << label->second << ": ";
+    else std::cout << label->second << ": ";
     std::cout << elapsed_sec << "." << std::setfill('0') << std::setw(6)
               << elapsed_subsec << std::endl;
 
@@ -81,7 +83,7 @@ void Timer::all_intervals(int idx) {
     for ( ; idx < this->open_interval; idx++)
         this->interval(idx);
     if (this->timings.size() % 2) {
-        std::cout << "Open interval ";
+        std::cout << EXCLAIM_EMOJI << "Open interval ";
         auto label = this->labels.find(this->open_interval);
         if (label == this->labels.end()) std::cout << this->open_interval;
         else std::cout << label->second;

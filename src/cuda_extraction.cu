@@ -103,24 +103,17 @@ std::unique_ptr<EV_Data> make_EV_GPU(const VE_Data & edgeTable,
     vtkIdType n_to_compute = n_edges * nbVertsInEdge;
     dim3 thread_block_size = 1024,
          grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
-    std::cout << "Kernel launch configuration is " << grid_size.x << " grid blocks "
+    std::cout << INFO_EMOJI << "Kernel launch configuration is " << grid_size.x << " grid blocks "
               << "with " << thread_block_size.x << " threads per block" << std::endl;
-    std::cout << "The mesh has " << n_points << " points and " << n_edges
+    std::cout << INFO_EMOJI << "The mesh has " << n_points << " points and " << n_edges
               << " edges" << std::endl;
-    std::cout << "Tids >= " << n_edges * nbVertsInEdge << " should auto-exit ("
+    std::cout << INFO_EMOJI << "Tids >= " << n_edges * nbVertsInEdge << " should auto-exit ("
               << (thread_block_size.x * grid_size.x) - n_to_compute << ")" << std::endl;
    KERNEL_WARN(EV_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
                             thread_block_size>>>(vertices_device,
                                 edges_device,
                                 n_edges,
                                 ev_computed));
-    /*
-    EV_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
-                            thread_block_size>>>(vertices_device,
-                                edges_device,
-                                n_edges,
-                                ev_computed);
-    */
     CUDA_WARN(cudaDeviceSynchronize());
     // Copy back to host and set in edgeList
     CUDA_WARN(cudaMemcpy(ev_host, ev_computed, ev_size, cudaMemcpyDeviceToHost));

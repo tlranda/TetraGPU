@@ -38,12 +38,12 @@ std::unique_ptr<TV_Data> get_TV_from_VTK(const arguments args) {
 
     // Points
     vtkPoints *points = unstructuredGrid->GetPoints();
-    if(!points) {
-        std::cerr << "DataSet has uninitialized `vtkPoints`." << std::endl;
+    if (!points) {
+        std::cerr << WARN_EMOJI << "DataSet has uninitialized `vtkPoints`." << std::endl;
     }
     int pointDataType = points->GetDataType();
-    if(pointDataType != VTK_FLOAT && pointDataType != VTK_DOUBLE) {
-        std::cerr << "Unable to initialize triangulation for point precision "
+    if (pointDataType != VTK_FLOAT && pointDataType != VTK_DOUBLE) {
+        std::cerr << WARN_EMOJI << "Unable to initialize triangulation for point precision "
                      "other than 'float' or 'double'." << std::endl;
     }
 
@@ -53,27 +53,27 @@ std::unique_ptr<TV_Data> get_TV_from_VTK(const arguments args) {
 
     // check if cell types are simplices
     int cellTypeStatus = checkCellTypes(unstructuredGrid);
-    if(cellTypeStatus == -1) {
-        std::cout << "Inhomogeneous cell dimensions detected." << std::endl;
+    if (cellTypeStatus == -1) {
+        std::cout << WARN_EMOJI << "Inhomogeneous cell dimensions detected." << std::endl;
     }
-    else if(cellTypeStatus == -2) {
-        std::cout << "Cells are not simplices." << std::endl << "Consider "
+    else if (cellTypeStatus == -2) {
+        std::cout << WARN_EMOJI << "Cells are not simplices." << std::endl << "Consider "
                      "using `vtkTetrahedralize` in pre-processing." <<
                      std::endl;
     }
 
     // Cells
     vtkCellArray *cells = unstructuredGrid->GetCells();
-    if(!cells) {
-        std::cerr << "DataSet has uninitialized `vtkCellArray`." << std::endl;
+    if (!cells) {
+        std::cerr << WARN_EMOJI << "DataSet has uninitialized `vtkCellArray`." << std::endl;
     }
     vtkIdType nCells = cells->GetNumberOfCells();
-    if(nCells < 0) {
-        std::cerr << "No cells detected in the dataset." << std::endl;
+    if (nCells < 0) {
+        std::cerr << WARN_EMOJI << "No cells detected in the dataset." << std::endl;
     }
     else {
-        std::cout << "Dataset loaded with " << nCells << " tetrahedra and " <<
-                     nPoints << " vertices" << std::endl;
+        std::cout << OK_EMOJI << "Dataset loaded with " << nCells
+                  << " tetrahedra and " << nPoints << " vertices" << std::endl;
     }
 
     // connectivity array stores vertex indices of each cell (e.g., tetrahedron)

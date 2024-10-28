@@ -4,6 +4,7 @@
 #include "cuda_safety.h" // Safety and wrappers, includes iostream and cuda runtime
 #include "cpu_extraction.h" // CPU-side datastructures and types
 #include "datatypes.h" // Structs and types
+#include "emoji.h" // emoji
 
 // MAKE PRECOMPUTED DATA AVAILABLE ON GPU
 void make_TV_for_GPU(vtkIdType * device_tv,
