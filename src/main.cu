@@ -84,6 +84,7 @@ int main(int argc, char *argv[]) {
         timer.tick_announce();
         #endif
     }
+    // Can also make here -- TE
 
     std::cout << FLAG_EMOJI << "--Should not auto-print timers past this point--" << std::endl;
     // Scope to de-allocate unique ptrs
@@ -108,6 +109,9 @@ int main(int argc, char *argv[]) {
                                          *faceTable);
     timer.tick();
     std::cout << OK_EMOJI << "Built " << faceCount << " faces." << std::endl;
+    // Can make here -- TF, FV, FE
+    // Critical Points: FT = TF', VV = (V*') x (*V) for any of TV, FV, EV, VF, VE
+
     timer.tick(); // bonus tick -- open interval
 
     return 0;
