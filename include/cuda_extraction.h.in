@@ -5,6 +5,9 @@
 #include "cpu_extraction.h" // CPU-side datastructures and types
 #include "datatypes.h" // Structs and types
 #include "emoji.h" // emoji
+#include "metrics.h" // timer
+
+#cmakedefine VALIDATE_GPU
 
 // MAKE PRECOMPUTED DATA AVAILABLE ON GPU
 void make_TV_for_GPU(vtkIdType * device_tv,

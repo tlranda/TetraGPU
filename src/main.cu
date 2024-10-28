@@ -19,6 +19,7 @@ int main(int argc, char *argv[]) {
     timer.tick();
     timer.interval("Argument parsing");
 
+    // GPU initialization
     {
         timer.label_next_interval("GPU context creation with dummy kernel");
         timer.tick();
@@ -71,7 +72,7 @@ int main(int argc, char *argv[]) {
                                                          edgeCount,
                                                          args);
         timer.tick_announce();
-        #ifdef VALIDATE
+        #ifdef VALIDATE_GPU
         timer.label_next_interval("Validate GPU EV");
         timer.tick();
         if(check_host_vs_device_EV(*EV, *device_EV)) {

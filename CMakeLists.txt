@@ -6,8 +6,16 @@ project(tetra_topo
     LANGUAGES CXX CUDA)
 
 file(GLOB sources src/*.cu src/*.cpp)
+
+# Options
+option(VALIDATE_GPU "Include CPU validation of GPU results" OFF)
+if (NOT VALIDATE_GPU)
+    # Remove validate.cpp from file globbing
+    list(REMOVE_ITEM sources src/validate.cpp)
+endif (NOT VALIDATE_GPU)
 add_executable(main ${sources})
 
+# CUDA Dependency
 # N01 has a whack installation that has to be adjusted
 execute_process(COMMAND hostname
                 OUTPUT_VARIABLE HOSTNAME
@@ -29,6 +37,18 @@ else()
     link_directories(${CUDA_LIBRARY_DIRS})
 endif()
 
+# VTK Dependency
+find_package(VTK PATHS ~/usr/local)
+find_package(VTK)
+if(NOT VTK_FOUND)
+    message("VTK NOT FOUND!")
+    return()
+endif()
+message(STATUS "VTK_VERSION: ${VTK_VERSION}")
+message("VTK_DIR: ${VTK_DIR}")
+# message("VTK_LIBRARIES: ${VTK_LIBRARIES}")
+
+# C++ / CUDA settings
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CUDA_STANDARD 11)
 set(CMAKE_THREAD_LIBS_INIT "-lpthread")
@@ -38,7 +58,7 @@ set(CMAKE_USE_PTHREADS_INIT 1)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 set(CUDA_SEPARABLE_COMPILATION ON)
 set(CMAKE_CUDA_ARCHITECTURES "60;61;62;70")
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+#set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # Set a default build type if none was specified
 set(default_build_type "Release")
@@ -55,21 +75,15 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
         "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()
 
-find_package(VTK PATHS ~/usr/local)
-find_package(VTK)
-if(NOT VTK_FOUND)
-    message("VTK NOT FOUND!")
-    return()
-endif()
-message(STATUS "VTK_VERSION: ${VTK_VERSION}")
-message("VTK_DIR: ${VTK_DIR}")
-# message("VTK_LIBRARIES: ${VTK_LIBRARIES}")
-
+# Adjustments for build types
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_options(main PRIVATE -g -O0)
 else()
     target_compile_options(main PRIVATE -O3)
 endif()
+
+# Final build
+configure_file(include/cuda_extraction.h.in cuda_extraction.h)
 target_link_libraries(main PRIVATE VTK::IOXML)
 target_include_directories(main PRIVATE include)
 install(TARGETS main)

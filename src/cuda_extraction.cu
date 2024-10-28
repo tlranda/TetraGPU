@@ -43,6 +43,7 @@ void make_VE_for_GPU(vtkIdType ** device_vertices,
     CUDA_ASSERT(cudaMallocHost((void**)&host_vertices, vertices_size));
     CUDA_ASSERT(cudaMallocHost((void**)&host_edges, edges_size));
 
+    Timer ve_translation;
     // Set contiguous data in host memory
     for (vtkIdType vertex_id = 0, index = 0; vertex_id < n_verts; vertex_id++) {
         for (const EdgeData & edge : ve_relationship[vertex_id]) {
@@ -54,14 +55,19 @@ void make_VE_for_GPU(vtkIdType ** device_vertices,
             host_vertices[index++] = edge.highVert;
         }
     }
+    ve_translation.tick();
 
     // Device copy and host free
     // BLOCKING -- provide barrier if made asynchronous to avoid free of host
     // memory before copy completes
+    ve_translation.tick();
     CUDA_WARN(cudaMemcpy(*device_vertices, host_vertices,
                          vertices_size, cudaMemcpyHostToDevice));
     CUDA_WARN(cudaMemcpy(*device_edges, host_edges,
                          edges_size, cudaMemcpyHostToDevice));
+    ve_translation.tick();
+    ve_translation.label_interval(0, "VE Host->GPU Translation");
+    ve_translation.label_interval(1, "VE Host->GPU Data Transfer");
     CUDA_WARN(cudaFreeHost(host_vertices));
     CUDA_WARN(cudaFreeHost(host_edges));
 }
@@ -109,19 +115,28 @@ std::unique_ptr<EV_Data> make_EV_GPU(const VE_Data & edgeTable,
               << " edges" << std::endl;
     std::cout << INFO_EMOJI << "Tids >= " << n_edges * nbVertsInEdge << " should auto-exit ("
               << (thread_block_size.x * grid_size.x) - n_to_compute << ")" << std::endl;
-   KERNEL_WARN(EV_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
+    Timer kernel;
+    KERNEL_WARN(EV_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
                             thread_block_size>>>(vertices_device,
                                 edges_device,
                                 n_edges,
                                 ev_computed));
     CUDA_WARN(cudaDeviceSynchronize());
+    kernel.tick();
+    kernel.label_prev_interval("GPU kernel duration");
     // Copy back to host and set in edgeList
+    kernel.tick();
     CUDA_WARN(cudaMemcpy(ev_host, ev_computed, ev_size, cudaMemcpyDeviceToHost));
+    kernel.tick();
+    kernel.label_prev_interval("GPU Device->Host transfer");
+    kernel.tick();
     // Reconfigure into edgeList for comparison
     #pragma omp parallel for num_threads(args.threadNumber)
     for (vtkIdType e = 0; e < n_edges; ++e) {
         edgeList->emplace_back(std::array<vtkIdType,nbVertsInEdge>{ev_host[(2*e)],ev_host[(2*e)+1]});
     }
+    kernel.tick();
+    kernel.label_prev_interval("GPU Device->Host translation");
     // Free device memory
     if (vertices_device != nullptr)
         CUDA_WARN(cudaFree(vertices_device));

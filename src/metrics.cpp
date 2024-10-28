@@ -6,8 +6,15 @@ Timer::Timer(bool deferred) { if (!deferred) this->tick(); }
 // Destructor
 Timer::~Timer(void) {
     // Print all unannounced closed intervals
-    if (this->last_printed < (this->timings.size()<<1))
+    if (this->last_printed < static_cast<int>(this->timings.size()>>1))
         this->all_intervals(this->last_printed+1);
+    /*
+    else {
+        std::cerr << "Deleting timer with " << (this->timings.size()>>1)
+                  << " intervals; " << this->last_printed << " have been printed"
+                  << std::endl;
+    }
+    */
 }
 
 
