@@ -83,7 +83,7 @@ else()
 endif()
 
 # Final build
-configure_file(include/cuda_extraction.h.in cuda_extraction.h)
+configure_file(include/datatypes.h.in datatypes.h)
 target_link_libraries(main PRIVATE VTK::IOXML)
 target_include_directories(main PRIVATE include)
 install(TARGETS main)
