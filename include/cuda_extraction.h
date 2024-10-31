@@ -10,11 +10,16 @@
 // MAKE PRECOMPUTED DATA AVAILABLE ON GPU
 void make_TV_for_GPU(vtkIdType * device_tv,
                      const TV_Data & tv_relationship);
-void make_VE_for_GPU(vtkIdType * device_vertices,
-                     vtkIdType * device_edges,
+void make_VE_for_GPU(vtkIdType ** device_vertices,
+                     vtkIdType ** device_edges,
                      const VE_Data & ve_relationship,
                      const vtkIdType n_edges,
                      const vtkIdType n_verts);
+void make_VF_for_GPU(vtkIdType * device_vertices,
+                     vtkIdType * device_faces,
+                     const VF_Data & vf_relationship,
+                     const vtkIdType n_verts,
+                     const vtkIdType n_faces);
 
 // REQUEST RELATIONSHIPS FROM GPU
 // EV = VE'
@@ -41,6 +46,7 @@ std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
                                      const VF_Data & VF,
                                      const vtkIdType n_points,
                                      const vtkIdType n_faces,
+                                     const vtkIdType n_cells,
                                      const arguments args);
 // FV = VF'
 std::unique_ptr<FV_Data> make_FV_GPU(const VF_Data & VF,
@@ -59,6 +65,13 @@ __global__ void EV_kernel(vtkIdType * __restrict__ vertices,
                           vtkIdType * __restrict__ edges,
                           const vtkIdType n_edges,
                           vtkIdType * __restrict__ ev);
+__global__ void TF_kernel(vtkIdType * __restrict__ tv,
+                          vtkIdType * __restrict__ vertices,
+                          vtkIdType * __restrict__ faces,
+                          const vtkIdType n_cells,
+                          const vtkIdType n_faces,
+                          const vtkIdType n_points,
+                          vtkIdType * __restrict__ tf);
 
 #endif
 

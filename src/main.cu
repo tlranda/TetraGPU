@@ -186,11 +186,11 @@ int main(int argc, char *argv[]) {
     // OPTIONAL: TF (green) [TV x VF]
     if (args.build_TF()) {
         std::cerr << EXCLAIM_EMOJI << "Not implemented yet" << std::endl;
-        /*
         timer.label_next_interval("TF [GPU]");
         timer.tick();
         std::unique_ptr<TF_Data> device_TF = make_TF_GPU(*TV, *VF, TV->nPoints,
-                                                         faceCount, args);
+                                                         faceCount, TV->nCells,
+                                                         args);
         timer.tick_announce();
         #ifdef VALIDATE_GPU
         if (args.validate()) {
@@ -208,7 +208,6 @@ int main(int argc, char *argv[]) {
             timer.tick_announce();
         }
         #endif
-        */
     }
 
     // OPTIONAL: FV (green) [VF']
