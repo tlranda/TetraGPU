@@ -272,7 +272,8 @@ std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
     if (vertices_device != nullptr) CUDA_WARN(cudaFree(vertices_device));
     if (faces_device != nullptr) CUDA_WARN(cudaFree(faces_device));
     if (tf_computed != nullptr) CUDA_WARN(cudaFree(tf_computed));
-    // Free host memory
-    if (tf_host != nullptr) CUDA_WARN(cudaFreeHost(tf_host));
+    // Free host memory -- segfaults when present, no leaks when absent, IDK why
+    //if (tf_host != nullptr) CUDA_WARN(cudaFreeHost(tf_host));
+    return TF;
 }
 
