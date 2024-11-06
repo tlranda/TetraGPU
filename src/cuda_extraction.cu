@@ -12,10 +12,15 @@ void make_TV_for_GPU(vtkIdType * device_tv,
 
     // Set contiguous data in host memory
     vtkIdType index = 0;
-    for (const auto & VertList : tv_relationship)
-        for (const vtkIdType vertex : VertList)
+    for (const auto & VertList : tv_relationship) {
+        /* Prototyping aid: see actual data order */
+        std::cout << "Tetra [" << index / 4 << "] Vertices: [";
+        for (const vtkIdType vertex : VertList) {
             host_flat_tv[index++] = vertex;
-
+            std::cout << vertex << " ";
+        }
+        std::cout << "]" << std::endl;
+    }
     // Device copy and host free
     // BLOCKING -- provide barrier if made asynchronous to avoid free of host
     // memory before copy completes
@@ -80,7 +85,7 @@ void make_VF_for_GPU(vtkIdType * device_vertices,
     // Size determinations
     size_t vertices_size = sizeof(vtkIdType) * n_faces * nbVertsInFace,
            // Can technically be one-third this size, but duplicate for now
-           faces_size = sizeof(vtkIdType) * n_faces * nbVertsInFace;
+           faces_size =    sizeof(vtkIdType) * n_faces * nbVertsInFace;
     // Allocations
     CUDA_ASSERT(cudaMalloc((void**)&device_vertices, vertices_size));
     CUDA_ASSERT(cudaMalloc((void**)&device_faces, faces_size));
@@ -102,6 +107,11 @@ void make_VF_for_GPU(vtkIdType * device_vertices,
             // Pack highest edge / ID
             host_faces[index] = face.id;
             host_vertices[index++] = face.highVert;
+            /* Prototyping aid: see actual data order
+            std::cout << "Face [" << face.id << "] Vertices [" << vertex_id
+                      << ", " << face.middleVert << ", " << face.highVert
+                      << "]" << std::endl;
+            */
         }
     }
     vf_translation.tick();
@@ -264,7 +274,15 @@ std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
     kernel.label_prev_interval("GPU Device->Host transfer");
     kernel.tick();
     // Reconfigure into host-side structure for comparison
-    std::cerr << "Not implemented: Device->Host memory transformation" << std::endl;
+    //#pragma omp parallel for num_threads(args.threadNumber)
+    for (vtkIdType c = 0; c < n_cells; ++c) {
+        TF->emplace_back(std::array<vtkIdType,nbFacesInCell>{
+                tf_host[(nbFacesInCell*c)],
+                tf_host[(nbFacesInCell*c)+1],
+                tf_host[(nbFacesInCell*c)+2],
+                tf_host[(nbFacesInCell*c)+3],
+                });
+    }
     kernel.tick();
     kernel.label_prev_interval("GPU Device->Host translation");
     // Free device memory
