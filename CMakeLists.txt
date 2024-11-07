@@ -77,9 +77,12 @@ endif()
 
 # Adjustments for build types
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_options(main PRIVATE -g -O0)
+    target_compile_options(main PRIVATE -g -lineinfo -O0)
+    #target_compile_options(main CUDA::CUDA_OPTIONS PRIVATE -G -O0)
+    set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -G -O0")
 else()
     target_compile_options(main PRIVATE -O3)
+    #target_compile_options(main CUDA::CUDA_OPTIONS PRIVATE -O3)
 endif()
 
 # Final build

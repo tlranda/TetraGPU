@@ -175,6 +175,16 @@ int main(int argc, char *argv[]) {
     if (args.build_TF()) {
         timer.label_next_interval("TF and VF [CPU]");
         faceCount = make_TF_and_VF(*TV, *TF, *VF);
+        /*
+        for (vtkIdType i = 0; i < TV->nPoints; i++) {
+            std::cout << "Vertex " << i << std::endl;
+            for (auto face : (*VF)[i]) {
+                std::cout << "\tFirst Face " << face.id << std::endl;
+                break;
+            }
+            std::cout << "\tn_faces " << (*VF)[i].size() << std::endl;
+        }
+        */
     }
     else {
         timer.label_next_interval("VF [CPU]");

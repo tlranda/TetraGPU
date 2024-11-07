@@ -110,6 +110,11 @@ vtkIdType make_TF_and_VF(const TV_Data & tv_relationship,
         // Use copy constructor to permit function-local mutation
         std::array<vtkIdType,nbVertsInCell> cellVertices(tv_relationship.cells[cid]);
         std::sort(cellVertices.begin(), cellVertices.end());
+        /*
+        std::cout << "Cell " << cid << " has vertices: " << cellVertices[0]
+                  << ", " << cellVertices[1] << ", " << cellVertices[2]
+                  << ", " << cellVertices[3] << std::endl;
+        */
         // face IDs can be given based on ascending vertex sums
         // given a SORTED list of vertex IDs, ascending order of vertex sums is:
         // v[[0,1,2]], v[[0,1,3]], v[[0,2,3]], v[[1,2,3]]
@@ -125,6 +130,12 @@ vtkIdType make_TF_and_VF(const TV_Data & tv_relationship,
                 high_vertex = (skip_id == 3) ? 2 : 3;
 
             std::vector<FaceData> &vec = faceTable[cellVertices[low_vertex]];
+            /*
+               std::cout << "\tFace " << 3-skip_id << " ("
+                      << cellVertices[low_vertex] << ", "
+                      << cellVertices[middle_vertex] << ", "
+                      << cellVertices[high_vertex] << ")" << std::endl;
+            */
             const auto pos = std::find_if(vec.begin(), vec.end(),
                     [&](const FaceData &f) {
                         return f.middleVert == cellVertices[middle_vertex] &&
@@ -136,10 +147,23 @@ vtkIdType make_TF_and_VF(const TV_Data & tv_relationship,
                                           cellVertices[high_vertex],
                                           faceCount));
                 cellFaceList[cid][3-skip_id] = faceCount;
+                /*
+                 * std::cout << "\t\tIs new; " << vec.size()
+                          << "th VF entry for vector "
+                          << cellVertices[low_vertex] << std::endl;
+                */
                 faceCount++;
             }
             // Found an existing face, still mark in TF
-            else cellFaceList[cid][3-skip_id] = pos->id;
+            else {
+                cellFaceList[cid][3-skip_id] = pos->id;
+                /*
+                std::cout << "\t\tIs old (id = " << pos->id << "); "
+                          << std::distance(vec.begin(), pos)
+                          << "th / " << vec.size() << " VF entry for vector "
+                          << cellVertices[low_vertex] << std::endl;
+                */
+            }
         }
     }
     return faceCount;
