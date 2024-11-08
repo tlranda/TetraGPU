@@ -5,9 +5,12 @@
 # SOME ENVIRONMENT VARIABLES ARE READ BY THIS SCRIPT:
 # RUNTIME_ARGS := Additional arguments to every single input file tested
 # VALIDATE := Use the validation build and add --validate to runtime arguments
+# DEBUG := Use Debug build type
 
 validate="${VALIDATE-0}";
 echo "validate='${validate}'";
+debug="${DEBUG-0}";
+echo "debug='${debug}'";
 
 if [ $# -eq 0 ]; then
     set -- "${@:1}" "Bucket.vtu";
@@ -23,6 +26,9 @@ cmake_command="CUDA_DIR=/usr/local/cuda-12.2 VTK_DIR=/home/tlranda/tools/VTK/VTK
 if [[ "${validate}" != "0" ]]; then
     cmake_command="${cmake_command} -DVALIDATE_GPU=ON";
 fi
+if [[ "${debug}" != "0" ]]; then
+    cmake_command="${cmake_command} -DCMAKE_BUILD_TYPE=\"Debug\"";
+fi
 echo $cmake_command;
 eval $cmake_command;
 if [ $? -ne 0 ]; then
@@ -37,12 +43,16 @@ if [ $? -ne 0 ]; then
 fi
 cd ..;
 
-for arg in $@; do
-    task="time ./${build_dir}/main --input $arg -t 24 ${RUNTIME_ARGS} ";
-    if [[ "${validate}" != "0" ]]; then
-        task="${task} --validate";
-    fi
-    echo "${task}";
-    eval "${task}";
-done;
+if [[ "${debug}" == "0" ]]; then
+    for arg in $@; do
+        task="time ./${build_dir}/main --input $arg -t 24 ${RUNTIME_ARGS} ";
+        if [[ "${validate}" != "0" ]]; then
+            task="${task} --validate";
+        fi
+        echo "${task}";
+        eval "${task}";
+    done;
+else
+    cuda-gdb ${build_dir}/main;
+fi
 
