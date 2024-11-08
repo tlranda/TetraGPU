@@ -8,16 +8,16 @@
 #include "metrics.h" // timer
 
 // MAKE PRECOMPUTED DATA AVAILABLE ON GPU
-void make_TV_for_GPU(vtkIdType * device_tv,
+void make_TV_for_GPU(vtkIdType ** device_tv,
                      const TV_Data & tv_relationship);
 void make_VE_for_GPU(vtkIdType ** device_vertices,
                      vtkIdType ** device_edges,
                      const VE_Data & ve_relationship,
                      const vtkIdType n_edges,
                      const vtkIdType n_verts);
-void make_VF_for_GPU(vtkIdType * device_vertices,
-                     vtkIdType * device_faces,
-                     vtkIdType * device_first_faces,
+void make_VF_for_GPU(vtkIdType ** device_vertices,
+                     vtkIdType ** device_faces,
+                     vtkIdType ** device_first_faces,
                      const VF_Data & vf_relationship,
                      const vtkIdType n_verts,
                      const vtkIdType n_faces);

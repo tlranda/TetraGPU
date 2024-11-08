@@ -82,9 +82,19 @@ typedef std::vector<FaceData> FE_Data; // DUMMY
 
 // Argument values to be stored here, with defaults if they are optional
 typedef struct argstruct {
-    std::string fileName;
+    std::string fileName = "tiny.vtu";
     int threadNumber = 1;
-    std::bitset<7> arg_flags;
+    // Endian-ness may mean defaults need to be set in LSB->MSB order
+    std::bitset<7> arg_flags{"00100000"};
+    std::map<int,std::string> flag_names = {
+        {0, "validate"},
+        {1, "TE"},
+        {2, "EV"},
+        {3, "ET"},
+        {4, "TF"},
+        {5, "FV"},
+        {6, "FE"}
+    };
     bool validate(void) const { return arg_flags[0]; }
     bool build_TE(void) const { return arg_flags[1]; }
     bool build_EV(void) const { return arg_flags[2]; }

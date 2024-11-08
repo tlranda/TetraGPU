@@ -1,7 +1,7 @@
 #include "validate.h"
 
-bool check_host_vs_device_EV(const EV_Data host_EV,
-                             const EV_Data device_EV) {
+bool check_host_vs_device_EV(const EV_Data & host_EV,
+                             const EV_Data & device_EV) {
     // Validate that host and device agree on EV Data
     // The vectors do NOT need to be ordered the same, they just need to agree
     // On the number of edges and vertex contents of each edge
@@ -13,6 +13,7 @@ bool check_host_vs_device_EV(const EV_Data host_EV,
     }
     unsigned int idx = 0,
                  n_printed = 0,
+                 n_found = 0,
                  n_failures = 0,
                  n_inverted = 0,
                  n_failures_before_early_exit = 0,
@@ -41,6 +42,7 @@ bool check_host_vs_device_EV(const EV_Data host_EV,
                     n_failures >= n_failures_before_early_exit) return false;
             }
             else {
+                n_found++;
                 n_inverted++;
                 if (n_printed < 10) {
                     std::cout << WARN_EMOJI
@@ -52,6 +54,7 @@ bool check_host_vs_device_EV(const EV_Data host_EV,
             }
         }
         else {
+            n_found++;
             if (n_printed < 10) {
                 std::cout << OK_EMOJI << "Matched edge between host and device ("
                           << EV_Array[0] << ", " << EV_Array[1] << ")"
@@ -60,6 +63,7 @@ bool check_host_vs_device_EV(const EV_Data host_EV,
             }
         }
     }
+    std::cerr << INFO_EMOJI << "Matched " << n_found << " edges" << std::endl;
     if (n_failures_before_early_exit == 0 && n_failures > 0)
         std::cerr << EXCLAIM_EMOJI << "Failed to match " << n_failures
                   << " edges" << std::endl;
@@ -75,6 +79,7 @@ bool check_host_vs_device_TF(const TF_Data & host, const TF_Data & device) {
     }
     unsigned int idx = 0,
                  n_printed = 0,
+                 n_found = 0,
                  n_failures = 0,
                  n_inverted = 0,
                  n_failures_before_early_exit = 0,
@@ -107,6 +112,7 @@ bool check_host_vs_device_TF(const TF_Data & host, const TF_Data & device) {
                     n_failures >= n_failures_before_early_exit) return false;
             }
             else {
+                n_found++;
                 n_inverted++;
                 if (n_printed < 10) {
                     std::cout << WARN_EMOJI
@@ -119,6 +125,7 @@ bool check_host_vs_device_TF(const TF_Data & host, const TF_Data & device) {
             }
         }
         else {
+            n_found++;
             if (n_printed < 10) {
                 std::cout << OK_EMOJI << "Matched face between host and device ("
                           << FaceArray[0] << ", " << FaceArray[1] << ", "
@@ -127,6 +134,7 @@ bool check_host_vs_device_TF(const TF_Data & host, const TF_Data & device) {
             }
         }
     }
+    std::cerr << INFO_EMOJI << "Matched " << n_found << " faces" << std::endl;
     if (n_failures_before_early_exit == 0 && n_failures > 0)
         std::cerr << EXCLAIM_EMOJI << "Failed to match " << n_failures
                   << " faces" << std::endl;

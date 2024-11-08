@@ -93,12 +93,6 @@ void parse(int argc, char *argv[], arguments& args) {
     std::stringstream errors;
 
     // Begin parsing
-    if (argc < 2) {
-        errors << EXCLAIM_EMOJI << "Missing required input .vtu file!"
-               << std::endl;
-        bad_args += 1;
-    }
-
     while (1) {
         int option_index = 0;
         c = getopt_long(argc, argv, optionstring, long_options, &option_index);
@@ -130,19 +124,33 @@ void parse(int argc, char *argv[], arguments& args) {
                 exit(EXIT_SUCCESS);
         }
     }
-    // Set bit flags
-    c = 0;
-    for (int bit_value : arg_flags) {
-        args.arg_flags[c] = bit_value != 0;
-        c++;
-    }
-
-    // Filename must be given
+    // Display parsed values
     if (args.fileName.empty()) {
         errors << EXCLAIM_EMOJI
                << "Must supply an input filename via -i | --input"
                << std::endl;
         bad_args += 1;
+    }
+    else {
+        std::cout << INFO_EMOJI << "Dataset: " << args.fileName << std::endl;
+    }
+    std::cout << INFO_EMOJI << "CPU threads: " << args.threadNumber
+              << std::endl;
+
+    // Set bit flags
+    c = 0;
+    for (int bit_value : arg_flags) {
+        #ifndef VALIDATE_GPU
+        if (c == 0) {
+            c++;
+            continue;
+        }
+        #endif
+        if (!args.arg_flags[c]) args.arg_flags[c] = bit_value != 0;
+        std::cout << INFO_EMOJI << "Bit flag [" << c << ": "
+                  << args.flag_names[c] << "]: "
+                  << (args.arg_flags[c] ? "true" : "false") << std::endl;
+        c++;
     }
 
     if (bad_args != 0) {

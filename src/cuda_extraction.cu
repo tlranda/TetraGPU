@@ -1,13 +1,12 @@
 #include "cuda_extraction.h"
 
-void make_TV_for_GPU(vtkIdType * device_tv,
+void make_TV_for_GPU(vtkIdType ** device_tv,
                            // vector of array of vertices in a tetra
                      const TV_Data & tv_relationship) {
     // Size determination
     size_t tv_flat_size = sizeof(vtkIdType) * tv_relationship.nCells * nbVertsInCell;
-    std::cout << "Allocating " << tv_relationship.nCells * nbVertsInCell << " vtkIdTypes for TV on GPU" << std::endl;
     // Allocations
-    CUDA_ASSERT(cudaMalloc((void**)&device_tv, tv_flat_size));
+    CUDA_ASSERT(cudaMalloc((void**)device_tv, tv_flat_size));
     vtkIdType * host_flat_tv = nullptr;
     CUDA_ASSERT(cudaMallocHost((void**)&host_flat_tv, tv_flat_size));
 
@@ -25,7 +24,7 @@ void make_TV_for_GPU(vtkIdType * device_tv,
     // Device copy and host free
     // BLOCKING -- provide barrier if made asynchronous to avoid free of host
     // memory before copy completes
-    CUDA_WARN(cudaMemcpy(device_tv, host_flat_tv,
+    CUDA_WARN(cudaMemcpy(*device_tv, host_flat_tv,
                          tv_flat_size, cudaMemcpyHostToDevice));
     CUDA_WARN(cudaFreeHost(host_flat_tv));
 }
@@ -78,9 +77,9 @@ void make_VE_for_GPU(vtkIdType ** device_vertices,
     CUDA_WARN(cudaFreeHost(host_edges));
 }
 
-void make_VF_for_GPU(vtkIdType * device_vertices,
-                     vtkIdType * device_faces,
-                     vtkIdType * device_first_faces,
+void make_VF_for_GPU(vtkIdType ** device_vertices,
+                     vtkIdType ** device_faces,
+                     vtkIdType ** device_first_faces,
                      const VF_Data & vf_relationship,
                      const vtkIdType n_verts,
                      const vtkIdType n_faces) {
@@ -91,9 +90,9 @@ void make_VF_for_GPU(vtkIdType * device_vertices,
            // Index into other arrays
            index_face_size = sizeof(vtkIdType) * n_verts;
     // Allocations
-    CUDA_ASSERT(cudaMalloc((void**)&device_vertices, vertices_size));
-    CUDA_ASSERT(cudaMalloc((void**)&device_faces, faces_size));
-    CUDA_ASSERT(cudaMalloc((void**)&device_first_faces, index_face_size));
+    CUDA_ASSERT(cudaMalloc((void**)device_vertices, vertices_size));
+    CUDA_ASSERT(cudaMalloc((void**)device_faces, faces_size));
+    CUDA_ASSERT(cudaMalloc((void**)device_first_faces, index_face_size));
     vtkIdType * host_vertices = nullptr,
               * host_faces = nullptr,
               * host_first_faces = nullptr;
@@ -157,11 +156,11 @@ void make_VF_for_GPU(vtkIdType * device_vertices,
     // BLOCKING -- provide barrier if made asynchronous to avoid free of host
     // memory before the copy completes
     vf_translation.tick();
-    CUDA_WARN(cudaMemcpy(device_vertices, host_vertices, vertices_size,
+    CUDA_WARN(cudaMemcpy(*device_vertices, host_vertices, vertices_size,
                          cudaMemcpyHostToDevice));
-    CUDA_WARN(cudaMemcpy(device_faces, host_faces, faces_size,
+    CUDA_WARN(cudaMemcpy(*device_faces, host_faces, faces_size,
                          cudaMemcpyHostToDevice));
-    CUDA_WARN(cudaMemcpy(device_first_faces, host_first_faces, index_face_size,
+    CUDA_WARN(cudaMemcpy(*device_first_faces, host_first_faces, index_face_size,
                          cudaMemcpyHostToDevice));
     vf_translation.tick();
     vf_translation.label_interval(0, "VF Host->GPU Translation");
@@ -256,7 +255,7 @@ __global__ void TF_kernel(vtkIdType * __restrict__ tv,
                           vtkIdType * __restrict__ tf) {
     vtkIdType tid = (blockDim.x * blockIdx.x) + threadIdx.x,
               face = (tid % 4);
-    if (tid >= 32) return; //(n_cells * nbFacesInCell)) return;
+    if (tid >= (n_cells * nbFacesInCell)) return;
 
     // Read your TV value -- because there are 4 vertices in a cell, every warp
     // is automatically cell-aligned in memory along 8 cells :)
@@ -312,8 +311,8 @@ std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
               * vertices_device = nullptr,
               * faces_device = nullptr,
               * first_faces_device = nullptr;
-    make_TV_for_GPU(tv_device, TV);
-    make_VF_for_GPU(vertices_device, faces_device, first_faces_device, VF,
+    make_TV_for_GPU(&tv_device, TV);
+    make_VF_for_GPU(&vertices_device, &faces_device, &first_faces_device, VF,
                     n_points, n_faces);
 
     // Compute the relationship
@@ -321,7 +320,7 @@ std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
     vtkIdType * tf_computed = nullptr,
               * tf_host = nullptr;
     CUDA_ASSERT(cudaMalloc((void**)&tf_computed, tf_size));
-    CUDA_ASSERT(cudaMalloc((void**)&tf_host, tf_size));
+    CUDA_ASSERT(cudaMallocHost((void**)&tf_host, tf_size));
     vtkIdType n_to_compute = n_cells * nbFacesInCell;
     dim3 thread_block_size = 1024,
          grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
@@ -371,7 +370,7 @@ std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
     if (first_faces_device != nullptr) CUDA_WARN(cudaFree(first_faces_device));
     if (tf_computed != nullptr) CUDA_WARN(cudaFree(tf_computed));
     // Free host memory -- segfaults when present, no leaks when absent, IDK why
-    //if (tf_host != nullptr) CUDA_WARN(cudaFreeHost(tf_host));
+    if (tf_host != nullptr) CUDA_WARN(cudaFreeHost(tf_host));
     return TF;
 }
 
