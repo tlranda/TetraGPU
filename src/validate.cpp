@@ -98,9 +98,15 @@ bool check_host_vs_device_TF(const TF_Data & host, const TF_Data & device) {
         idx++;
         auto index = std::find(begin(device), end(device), FaceArray);
         if (index == std::end(device)) {
-            // Look for mis-ordered face
-            // auto reordered_face = ; // Swap 0,1,2 orders
-            //index = std::find(begin(device), end(device), reordered_face);
+            // Look for mis-ordered faces
+            std::array<vtkIdType,nbFacesInCell> reordered_face{FaceArray[0],
+                                                               FaceArray[1],
+                                                               FaceArray[2],
+                                                               FaceArray[3]};
+            while (std::next_permutation(reordered_face.begin(), reordered_face.end())) {
+                index = std::find(begin(device), end(device), reordered_face);
+                if (index != std::end(device)) break;
+            }
             if (index == std::end(device)){
                 n_failures++;
                 if (n_failures <= n_failures_to_print)
@@ -116,10 +122,9 @@ bool check_host_vs_device_TF(const TF_Data & host, const TF_Data & device) {
                 n_inverted++;
                 if (n_printed < 10) {
                     std::cout << WARN_EMOJI
-                              << "Matched INVERTED face between host and device ("
-                              //<< reordered_face[0] << ", " << reordered_face[1]
-                              //<< ", " << reordered_face[2]
-                              << ")" << std::endl;
+                              << "Matched REORDERED face between host and device ("
+                              << reordered_face[0] << ", " << reordered_face[1]
+                              << ", " << reordered_face[2] << ")" << std::endl;
                     n_printed++;
                 }
             }

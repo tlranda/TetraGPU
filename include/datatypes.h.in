@@ -85,7 +85,7 @@ typedef struct argstruct {
     std::string fileName = "tiny.vtu";
     int threadNumber = 1;
     // Endian-ness may mean defaults need to be set in LSB->MSB order
-    std::bitset<7> arg_flags{"00100000"};
+    std::bitset<7> arg_flags{"00100001"};
     std::map<int,std::string> flag_names = {
         {0, "validate"},
         {1, "TE"},
