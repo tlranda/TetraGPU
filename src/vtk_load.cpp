@@ -96,11 +96,20 @@ std::unique_ptr<TV_Data> get_TV_from_VTK(const arguments args) {
     // that adjacent cellIDs are close on the mesh and that their vertex IDs
     // are ordered to promote spatial locality between neighbor cells
     std::unique_ptr<TV_Data> data = std::make_unique<TV_Data>(nPoints, nCells);
-    #pragma omp parallel for num_threads(args.threadNumber)
+    //#pragma omp parallel for num_threads(args.threadNumber)
     for (vtkIdType cellIndex = 0; cellIndex < nCells; cellIndex++) {
+        std::array<vtkIdType,4> cell_vertices{
+            connectivity[offsets[cellIndex]],
+            connectivity[offsets[cellIndex]+1],
+            connectivity[offsets[cellIndex]+2],
+            connectivity[offsets[cellIndex]+3]};
+        // YOU HAVE TO SORT HERE OR ELSE SOME DATASETS WILL BREAK INVARIANTS
+        // HELD BY SUBSEQUENT CODE
+        std::sort(cell_vertices.begin(), cell_vertices.end());
+        // Because std::arrays are stack-allocated OVERRIDE the memory do not
+        // replace it with memory from this frame
         for (int vertexIndex = 0; vertexIndex < 4; vertexIndex++) {
-            data->cells[cellIndex][vertexIndex] = connectivity[offsets[cellIndex] + vertexIndex];
-            //data->cells[(4*cellIndex)+vertexIndex] = connectivity[offsets[cellIndex] + vertexIndex];
+            data->cells[cellIndex][vertexIndex] = cell_vertices[vertexIndex];
         }
     }
 

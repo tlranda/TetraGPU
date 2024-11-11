@@ -168,23 +168,18 @@ int main(int argc, char *argv[]) {
     // MANDATORY: VF (red) [TV walk with semantic ordering to prevent dupes]
     // OPTIONAL: TF (green) [TV walk with semantic ordering to prevent dupes]
     std::cout << PUSHPIN_EMOJI << "Building faces..." << std::endl;
-    std::unique_ptr<TF_Data> TF = std::make_unique<TF_Data>(TV->nCells);
+    std::unique_ptr<TF_Data> TF = std::make_unique<TF_Data>();
     std::unique_ptr<VF_Data> VF = std::make_unique<VF_Data>(TV->nPoints);
     vtkIdType faceCount;
     timer.tick();
     if (args.build_TF()) {
+        // RESIZE initializes the std::arrays in this frame and permits passing,
+        // to other functions; if you use reserve instead, the allocation is
+        // only valid during make_TF_and_VF() and afterwards you will get valid
+        // and (likely)defined behavior of all 0's :(
+        TF->resize(TV->nCells);
         timer.label_next_interval("TF and VF [CPU]");
         faceCount = make_TF_and_VF(*TV, *TF, *VF);
-        /*
-        for (vtkIdType i = 0; i < TV->nPoints; i++) {
-            std::cout << "Vertex " << i << std::endl;
-            for (auto face : (*VF)[i]) {
-                std::cout << "\tFirst Face " << face.id << std::endl;
-                break;
-            }
-            std::cout << "\tn_faces " << (*VF)[i].size() << std::endl;
-        }
-        */
     }
     else {
         timer.label_next_interval("VF [CPU]");
@@ -195,7 +190,6 @@ int main(int argc, char *argv[]) {
 
     // OPTIONAL: TF (green) [TV x VF]
     if (args.build_TF()) {
-        std::cerr << EXCLAIM_EMOJI << "Not validated yet" << std::endl;
         timer.label_next_interval("TF [GPU]");
         timer.tick();
         std::unique_ptr<TF_Data> device_TF = make_TF_GPU(*TV, *VF, TV->nPoints,

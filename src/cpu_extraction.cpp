@@ -110,11 +110,6 @@ vtkIdType make_TF_and_VF(const TV_Data & tv_relationship,
         // Use copy constructor to permit function-local mutation
         std::array<vtkIdType,nbVertsInCell> cellVertices(tv_relationship.cells[cid]);
         std::sort(cellVertices.begin(), cellVertices.end());
-        /*
-        std::cout << "Cell " << cid << " has vertices: " << cellVertices[0]
-                  << ", " << cellVertices[1] << ", " << cellVertices[2]
-                  << ", " << cellVertices[3] << std::endl;
-        */
         // face IDs can be given based on ascending vertex sums
         // given a SORTED list of vertex IDs, ascending order of vertex sums is:
         // v[[0,1,2]], v[[0,1,3]], v[[0,2,3]], v[[1,2,3]]
@@ -125,17 +120,16 @@ vtkIdType make_TF_and_VF(const TV_Data & tv_relationship,
         // Based on sorting, 3 faces will use the lowest FaceID of the Cell
         // for their basis in faceTable
         for (int skip_id = 3; skip_id >= 0; skip_id--) {
+            // Modified loop iteration order to match GPU processing order (no sorting for validation needed)
+            // 3 : lo = 0, mid = 1, hi = 2
+            // 0 : lo = 1, mid = 2, hi = 3
+            // 1 : lo = 0, mid = 2, hi = 3
+            // 2 : lo = 0, mid = 1, hi = 3
             int low_vertex = (skip_id > 0) ? 0 : 1,
                 middle_vertex = (skip_id > 1) ? 1 : 2,
                 high_vertex = (skip_id == 3) ? 2 : 3;
 
             std::vector<FaceData> &vec = faceTable[cellVertices[low_vertex]];
-            /*
-               std::cout << "\tFace " << 3-skip_id << " ("
-                      << cellVertices[low_vertex] << ", "
-                      << cellVertices[middle_vertex] << ", "
-                      << cellVertices[high_vertex] << ")" << std::endl;
-            */
             const auto pos = std::find_if(vec.begin(), vec.end(),
                     [&](const FaceData &f) {
                         return f.middleVert == cellVertices[middle_vertex] &&
@@ -147,23 +141,10 @@ vtkIdType make_TF_and_VF(const TV_Data & tv_relationship,
                                           cellVertices[high_vertex],
                                           faceCount));
                 cellFaceList[cid][3-skip_id] = faceCount;
-                /*
-                 * std::cout << "\t\tIs new; " << vec.size()
-                          << "th VF entry for vector "
-                          << cellVertices[low_vertex] << std::endl;
-                */
                 faceCount++;
             }
             // Found an existing face, still mark in TF
-            else {
-                cellFaceList[cid][3-skip_id] = pos->id;
-                /*
-                std::cout << "\t\tIs old (id = " << pos->id << "); "
-                          << std::distance(vec.begin(), pos)
-                          << "th / " << vec.size() << " VF entry for vector "
-                          << cellVertices[low_vertex] << std::endl;
-                */
-            }
+            else cellFaceList[cid][3-skip_id] = pos->id;
         }
     }
     return faceCount;
@@ -186,6 +167,11 @@ vtkIdType make_VF(const TV_Data & tv_relationship,
         // Based on sorting, 3 faces will use the lowest FaceID of the Cell
         // for their basis in faceTable
         for (int skip_id = 3; skip_id >= 0; skip_id--) {
+            // Modified loop iteration order to match GPU processing order (no sorting for validation needed)
+            // 3 : lo = 0, mid = 1, hi = 2
+            // 0 : lo = 1, mid = 2, hi = 3
+            // 1 : lo = 0, mid = 2, hi = 3
+            // 2 : lo = 0, mid = 1, hi = 3
             int low_vertex = (skip_id > 0) ? 0 : 1,
                 middle_vertex = (skip_id > 1) ? 1 : 2,
                 high_vertex = (skip_id == 3) ? 2 : 3;

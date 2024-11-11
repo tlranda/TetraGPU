@@ -25,7 +25,13 @@ else
     fi
 fi
 
-cmake_command="CUDA_DIR=/usr/local/cuda-12.2 VTK_DIR=/home/tlranda/tools/VTK/VTK-9.3.1/build_gcc7 cmake -B ${build_dir} -DCMAKE_CUDA_HOST_COMPILER=/home/tlranda/tools/gcc7/bin/g++ -DCMAKE_CXX_COMPILER=/home/tlranda/tools/gcc7/bin/g++";
+if [[ "${debug}" == "0" ]]; then
+    build_type="Release";
+else
+    build_type="Debug";
+fi
+
+cmake_command="CUDA_DIR=/usr/local/cuda-12.2 VTK_DIR=/home/tlranda/tools/VTK/VTK-9.3.1/build_gcc7 cmake -B ${build_dir} -DCMAKE_CUDA_HOST_COMPILER=/home/tlranda/tools/gcc7/bin/g++ -DCMAKE_CXX_COMPILER=/home/tlranda/tools/gcc7/bin/g++ -DCMAKE_BUILD_TYPE=${build_type}";
 if [[ "${validate}" != "0" ]]; then
     cmake_command="${cmake_command} -DVALIDATE_GPU=ON";
 fi

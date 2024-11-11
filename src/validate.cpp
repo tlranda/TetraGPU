@@ -1,5 +1,7 @@
 #include "validate.h"
 
+const int MAX_TO_PRINT = 10;
+
 bool check_host_vs_device_EV(const EV_Data & host_EV,
                              const EV_Data & device_EV) {
     // Validate that host and device agree on EV Data
@@ -17,7 +19,7 @@ bool check_host_vs_device_EV(const EV_Data & host_EV,
                  n_failures = 0,
                  n_inverted = 0,
                  n_failures_before_early_exit = 0,
-                 n_failures_to_print = 10;
+                 n_failures_to_print = MAX_TO_PRINT;
     for (const auto EV_Array : host_EV) {
         if (idx % 1000 == 0)
             std::cerr << INFO_EMOJI << "Process edge " << idx << " ("
@@ -95,13 +97,10 @@ bool check_host_vs_device_TF(TF_Data & host, TF_Data & device) {
             });
 
 
-    const long long int MAX_TO_PRINT = 40,
-                        ONLY_PRINT = -1;
     long long int idx = 0,
                   n_printed = 0,
                   n_found = 0,
                   n_failures = 0,
-                  n_inverted = 0,
                   n_failures_before_early_exit = 0,
                   n_failures_to_print = MAX_TO_PRINT;
     for (const auto FaceArray : host) {
@@ -109,15 +108,8 @@ bool check_host_vs_device_TF(TF_Data & host, TF_Data & device) {
             std::cerr << INFO_EMOJI << "Process cell " << idx << " ("
                       << n_failures << " failures so far "
                       << 100 * n_failures / static_cast<float>(idx)
-                      << " % | " << n_inverted << " mis-ordered faces found "
-                      << 100 * n_inverted / static_cast<float>(idx)
                       << " %)" << std::endl;
         idx++;
-        if (n_printed < MAX_TO_PRINT && (ONLY_PRINT < 0 || ONLY_PRINT == idx)) {
-            std::cout << INFO_EMOJI << "Looking for CPU cell " << idx << ": "
-                      << FaceArray[0] << ", " << FaceArray[1] << ", "
-                      << FaceArray[2] << ", " << FaceArray[3] << std::endl;
-        }
         auto index = std::find(begin(device), end(device), FaceArray);
         if (index == std::end(device)) {
             n_failures++;
@@ -140,7 +132,7 @@ bool check_host_vs_device_TF(TF_Data & host, TF_Data & device) {
         }
         else {
             n_found++;
-            if (n_printed < MAX_TO_PRINT && (ONLY_PRINT < 0 || ONLY_PRINT == idx)) {
+            if (n_printed < MAX_TO_PRINT) {
                 std::cout << OK_EMOJI << "Matched face between host " << idx-1
                           << " and device " << std::distance(device.begin(), index)
                           << " (" << FaceArray[0] << ", " << FaceArray[1]
@@ -148,17 +140,20 @@ bool check_host_vs_device_TF(TF_Data & host, TF_Data & device) {
                           << ")" << std::endl;
                 n_printed++;
             }
+            /*
+            else if (idx-1 != std::distance(device.begin(), index)) {
+                std::cerr << WARN_EMOJI << "Host and device indices MATCHED, "
+                          << "but in an unexpected location (host: " << idx-1
+                          << ", device: "
+                          << std::distance(device.begin(), index) << ")"
+                          << std::endl;
+            }
+            */
         }
     }
     std::cerr << INFO_EMOJI << "Matched " << n_found << " faces" << std::endl;
     if (n_failures_before_early_exit == 0 && n_failures > 0)
         std::cerr << EXCLAIM_EMOJI << "Failed to match " << n_failures
                   << " faces" << std::endl;
-    // Zultradebug
-    /*std::cout << std::endl;
-    for (auto face : device) {
-        std::cout << PUSHPIN_EMOJI << face[0] << ", " << face[1] << ", " << face[2] << ", " << face[3] << std::endl;
-    }
-    */
     return n_failures == 0;
 }

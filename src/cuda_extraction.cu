@@ -12,15 +12,9 @@ void make_TV_for_GPU(vtkIdType ** device_tv,
 
     // Set contiguous data in host memory
     vtkIdType index = 0;
-    for (const auto & VertList : tv_relationship) {
-        /* Prototyping aid: see actual data order */
-        //std::cout << "Tetra [" << index / 4 << "] Vertices: [";
-        for (const vtkIdType vertex : VertList) {
+    for (const auto & VertList : tv_relationship)
+        for (const vtkIdType vertex : VertList)
             host_flat_tv[index++] = vertex;
-            //std::cout << vertex << " ";
-        }
-        //std::cout << "]" << std::endl;
-    }
     // Device copy and host free
     // BLOCKING -- provide barrier if made asynchronous to avoid free of host
     // memory before copy completes
@@ -117,11 +111,6 @@ void make_VF_for_GPU(vtkIdType ** device_vertices,
             // Pack highest edge / ID
             host_faces[index] = face.id;
             host_vertices[index++] = face.highVert;
-            /* Prototyping aid: see actual data order
-            std::cout << "Face [" << face.id << "] Vertices [" << vertex_id
-                      << ", " << face.middleVert << ", " << face.highVert
-                      << "]" << std::endl;
-            */
         }
     }
     // We use idx+1 to set a scan limit when looking for the face, though TBH
@@ -136,21 +125,13 @@ void make_VF_for_GPU(vtkIdType ** device_vertices,
     // at the high-end of this data structure
     for (vtkIdType vertex_id = n_verts-1; vertex_id >= 0; vertex_id--) {
         if (host_first_faces[vertex_id] == (n_faces+1) * nbVertsInFace) {
-            if (vertex_id == n_verts-1) {
+            if (vertex_id == n_verts-1)
                 host_first_faces[vertex_id] = n_faces * nbVertsInFace;
-            }
-            else {
+            else
                 host_first_faces[vertex_id] = host_first_faces[vertex_id+1];
-            }
         }
     }
     vf_translation.tick();
-    /*
-    for (vtkIdType vertex_id = 0; vertex_id < n_verts; vertex_id++) {
-        std::cout << "First face of vertex " << vertex_id << " = "
-                  << host_first_faces[vertex_id] / 3 << std::endl;
-    }
-    */
 
     // Device copy and host free
     // BLOCKING -- provide barrier if made asynchronous to avoid free of host
@@ -207,12 +188,15 @@ std::unique_ptr<EV_Data> make_EV_GPU(const VE_Data & edgeTable,
     vtkIdType n_to_compute = n_edges * nbVertsInEdge;
     dim3 thread_block_size = 1024,
          grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
-    std::cout << INFO_EMOJI << "Kernel launch configuration is " << grid_size.x << " grid blocks "
-              << "with " << thread_block_size.x << " threads per block" << std::endl;
-    std::cout << INFO_EMOJI << "The mesh has " << n_points << " points and " << n_edges
-              << " edges" << std::endl;
-    std::cout << INFO_EMOJI << "Tids >= " << n_edges * nbVertsInEdge << " should auto-exit ("
-              << (thread_block_size.x * grid_size.x) - n_to_compute << ")" << std::endl;
+    std::cout << INFO_EMOJI << "Kernel launch configuration is " << grid_size.x
+              << " grid blocks with " << thread_block_size.x
+              << " threads per block" << std::endl;
+    std::cout << INFO_EMOJI << "The mesh has " << n_points << " points and "
+              << n_edges << " edges" << std::endl;
+    std::cout << INFO_EMOJI << "Tids >= " << n_edges * nbVertsInEdge
+              << " should auto-exit ("
+              << (thread_block_size.x * grid_size.x) - n_to_compute << ")"
+              << std::endl;
     Timer kernel;
     KERNEL_WARN(EV_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
                             thread_block_size>>>(vertices_device,
@@ -230,9 +214,9 @@ std::unique_ptr<EV_Data> make_EV_GPU(const VE_Data & edgeTable,
     kernel.tick();
     // Reconfigure into edgeList for comparison
     #pragma omp parallel for num_threads(args.threadNumber)
-    for (vtkIdType e = 0; e < n_edges; ++e) {
-        edgeList->emplace_back(std::array<vtkIdType,nbVertsInEdge>{ev_host[(2*e)],ev_host[(2*e)+1]});
-    }
+    for (vtkIdType e = 0; e < n_edges; ++e)
+        edgeList->emplace_back(std::array<vtkIdType,nbVertsInEdge>{
+                                    ev_host[(2*e)],ev_host[(2*e)+1]});
     kernel.tick();
     kernel.label_prev_interval("GPU Device->Host translation");
     // Free device memory
@@ -281,20 +265,19 @@ __global__ void TF_kernel(vtkIdType * __restrict__ tv,
         if (face == 1) face_low = v1;
     }
 
+    // While syncing may not be strictly required, empirically it seems to make
+    // the kernel faster on average
+    __syncthreads();
+
     // !! Scan VF for your face match -- divergence expected !!
     // We do NOT guard against an out-of-bounds check on the condition, as the
     // LOW face explicitly has 2 other vertices higher than it, therefore those
-    // vertices always define an upper bound without touching OOM.
+    // vertices always define an upper bound without touching OOM (worst-case
+    // those vertices indicate to go to the end of the vertices array)
     for (vtkIdType i = first_faces[face_low]; i < first_faces[face_low+1]; i += 3) {
         if (vertices[i+1] == face_mid && vertices[i+2] == face_high) {
             tf[tid] = faces[i];
-
-            // !! We can exit the threads that find their face early as a way
-            // to cut down on sustained divergence !!
-            __threadfence(); // ENSURE the global memory write completes
-            //return;
-            // If more processing exists within this kernel later on, then we
-            // can break instead
+            break;
         }
         __syncthreads();
     }
@@ -335,9 +318,6 @@ std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
     std::cout << INFO_EMOJI << "Tids >= " << n_cells * nbFacesInCell << " should auto-exit ("
               << (thread_block_size.x * grid_size .x) - n_to_compute << ")"
               << std::endl;
-    thread_block_size = 64;
-    grid_size = 1;
-    std::cerr << EXCLAIM_EMOJI << WARN_EMOJI << "Intentionally overriding kernel launch params!" << std::endl;
     Timer kernel;
     KERNEL_WARN(TF_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
                             thread_block_size>>>(tv_device,
@@ -358,7 +338,6 @@ std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
     kernel.label_prev_interval("GPU Device->Host transfer");
     kernel.tick();
     // Reconfigure into host-side structure for comparison
-    //#pragma omp parallel for num_threads(args.threadNumber)
     for (vtkIdType c = 0; c < n_cells; ++c) {
         TF->emplace_back(std::array<vtkIdType,nbFacesInCell>{
                 tf_host[(nbFacesInCell*c)],
@@ -375,7 +354,6 @@ std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
     if (faces_device != nullptr) CUDA_WARN(cudaFree(faces_device));
     if (first_faces_device != nullptr) CUDA_WARN(cudaFree(first_faces_device));
     if (tf_computed != nullptr) CUDA_WARN(cudaFree(tf_computed));
-    // Free host memory -- segfaults when present, no leaks when absent, IDK why
     if (tf_host != nullptr) CUDA_WARN(cudaFreeHost(tf_host));
     return TF;
 }
