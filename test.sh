@@ -20,6 +20,9 @@ if [[ "${validate}" == "0" ]]; then
     build_dir="build_${HOSTNAME}";
 else
     build_dir="build_${HOSTNAME}_validate";
+    if [[ "${RUNTIME_ARGS}" != *"--validate"* ]]; then
+        RUNTIME_ARGS="${RUNTIME_ARGS} --validate";
+    fi
 fi
 
 cmake_command="CUDA_DIR=/usr/local/cuda-12.2 VTK_DIR=/home/tlranda/tools/VTK/VTK-9.3.1/build_gcc7 cmake -B ${build_dir} -DCMAKE_CUDA_HOST_COMPILER=/home/tlranda/tools/gcc7/bin/g++ -DCMAKE_CXX_COMPILER=/home/tlranda/tools/gcc7/bin/g++";
@@ -46,13 +49,12 @@ cd ..;
 if [[ "${debug}" == "0" ]]; then
     for arg in $@; do
         task="time ./${build_dir}/main --input $arg -t 24 ${RUNTIME_ARGS} ";
-        if [[ "${validate}" != "0" ]]; then
-            task="${task} --validate";
-        fi
         echo "${task}";
         eval "${task}";
     done;
 else
+    echo "Suggested run command:";
+    echo "--input $1 ${RUNTIME_ARGS}";
     cuda-gdb ${build_dir}/main;
 fi
 

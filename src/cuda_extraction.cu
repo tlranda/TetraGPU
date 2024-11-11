@@ -288,12 +288,15 @@ __global__ void TF_kernel(vtkIdType * __restrict__ tv,
     for (vtkIdType i = first_faces[face_low]; i < first_faces[face_low+1]; i += 3) {
         if (vertices[i+1] == face_mid && vertices[i+2] == face_high) {
             tf[tid] = faces[i];
+
             // !! We can exit the threads that find their face early as a way
             // to cut down on sustained divergence !!
-            return;
+            __threadfence(); // ENSURE the global memory write completes
+            //return;
             // If more processing exists within this kernel later on, then we
             // can break instead
         }
+        __syncthreads();
     }
 }
 
@@ -332,6 +335,9 @@ std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
     std::cout << INFO_EMOJI << "Tids >= " << n_cells * nbFacesInCell << " should auto-exit ("
               << (thread_block_size.x * grid_size .x) - n_to_compute << ")"
               << std::endl;
+    thread_block_size = 64;
+    grid_size = 1;
+    std::cerr << EXCLAIM_EMOJI << WARN_EMOJI << "Intentionally overriding kernel launch params!" << std::endl;
     Timer kernel;
     KERNEL_WARN(TF_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
                             thread_block_size>>>(tv_device,

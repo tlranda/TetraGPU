@@ -70,23 +70,40 @@ bool check_host_vs_device_EV(const EV_Data & host_EV,
     return n_failures == 0;
 }
 
-bool check_host_vs_device_TF(const TF_Data & host, const TF_Data & device) {
+bool check_host_vs_device_TF(TF_Data & host, TF_Data & device) {
     if (host.size() != device.size()) {
         std::cerr << EXCLAIM_EMOJI << "Device TF size (" << device.size()
                   << ") != Host TF size (" << host.size()
                   << ")" << std::endl;
         return false;
     }
-    unsigned int idx = 0,
-                 n_printed = 0,
-                 n_found = 0,
-                 n_failures = 0,
-                 n_inverted = 0,
-                 n_failures_before_early_exit = 0,
-                 n_failures_to_print = 10;
-    std::cerr << WARN_EMOJI << "This function is not fully implemented! "
-              << "It should properly validate a 100\% conforming GPU output, "
-              << "but cannot check for near-misses" << std::endl;
+    /* The faces can technically come in any order and be valid, however that
+     * can make the search to validate take a long time. It ALSO can mess up
+     * helpful tools like std::find and std::next_permutation if the back-end
+     * implementation attempts to take shortcuts based on comparables like our
+     * basic datatypes (integers of some size). THEREFORE, you need to sort
+     * each array in both the host and the device vectors PRIOR to searching
+     * for matches. Then comparisons via std::find() are able to guarantee
+     * matches are located (or not, when absent) in one shot. */
+    std::for_each(host.begin(), host.end(),
+            [](std::array<vtkIdType,nbFacesInCell>& arr) {
+                std::sort(arr.begin(), arr.end());
+            });
+    std::for_each(device.begin(), device.end(),
+            [](std::array<vtkIdType,nbFacesInCell>& arr) {
+                std::sort(arr.begin(), arr.end());
+            });
+
+
+    const long long int MAX_TO_PRINT = 40,
+                        ONLY_PRINT = -1;
+    long long int idx = 0,
+                  n_printed = 0,
+                  n_found = 0,
+                  n_failures = 0,
+                  n_inverted = 0,
+                  n_failures_before_early_exit = 0,
+                  n_failures_to_print = MAX_TO_PRINT;
     for (const auto FaceArray : host) {
         if (idx % 1000 == 0)
             std::cerr << INFO_EMOJI << "Process cell " << idx << " ("
@@ -96,45 +113,39 @@ bool check_host_vs_device_TF(const TF_Data & host, const TF_Data & device) {
                       << 100 * n_inverted / static_cast<float>(idx)
                       << " %)" << std::endl;
         idx++;
+        if (n_printed < MAX_TO_PRINT && (ONLY_PRINT < 0 || ONLY_PRINT == idx)) {
+            std::cout << INFO_EMOJI << "Looking for CPU cell " << idx << ": "
+                      << FaceArray[0] << ", " << FaceArray[1] << ", "
+                      << FaceArray[2] << ", " << FaceArray[3] << std::endl;
+        }
         auto index = std::find(begin(device), end(device), FaceArray);
         if (index == std::end(device)) {
-            // Look for mis-ordered faces
-            std::array<vtkIdType,nbFacesInCell> reordered_face{FaceArray[0],
-                                                               FaceArray[1],
-                                                               FaceArray[2],
-                                                               FaceArray[3]};
-            while (std::next_permutation(reordered_face.begin(), reordered_face.end())) {
-                index = std::find(begin(device), end(device), reordered_face);
-                if (index != std::end(device)) break;
+            n_failures++;
+            if (n_failures <= n_failures_to_print) {
+                std::cerr << WARN_EMOJI << "Could not find set of faces ("
+                          << FaceArray[0] << ", " << FaceArray[1] << ", "
+                          << FaceArray[2] << ", " << FaceArray[3]
+                          << ") in device TF!" << std::endl;
+                std::cerr << WARN_EMOJI << "Expected match at index " << idx-1
+                          << " between host (" << FaceArray[0] << ", "
+                          << FaceArray[1] << ", " << FaceArray[2] << ", "
+                          << FaceArray[3] << ") and device ("
+                          << device[idx-1][0] << ", " << device[idx-1][1]
+                          << ", " << device[idx-1][2] << ", "
+                          << device[idx-1][3] << ")" << std::endl;
+                n_printed++;
             }
-            if (index == std::end(device)){
-                n_failures++;
-                if (n_failures <= n_failures_to_print)
-                    std::cerr << WARN_EMOJI << "Could not find face ("
-                              << FaceArray[0] << ", " << FaceArray[1] << ", "
-                              << FaceArray[2] << ") in device EV!"
-                              << std::endl;
-                if (n_failures_before_early_exit > 0 &&
-                    n_failures >= n_failures_before_early_exit) return false;
-            }
-            else {
-                n_found++;
-                n_inverted++;
-                if (n_printed < 10) {
-                    std::cout << WARN_EMOJI
-                              << "Matched REORDERED face between host and device ("
-                              << reordered_face[0] << ", " << reordered_face[1]
-                              << ", " << reordered_face[2] << ")" << std::endl;
-                    n_printed++;
-                }
-            }
+            if (n_failures_before_early_exit > 0 &&
+                n_failures >= n_failures_before_early_exit) return false;
         }
         else {
             n_found++;
-            if (n_printed < 10) {
-                std::cout << OK_EMOJI << "Matched face between host and device ("
-                          << FaceArray[0] << ", " << FaceArray[1] << ", "
-                          << FaceArray[2] << ")" << std::endl;
+            if (n_printed < MAX_TO_PRINT && (ONLY_PRINT < 0 || ONLY_PRINT == idx)) {
+                std::cout << OK_EMOJI << "Matched face between host " << idx-1
+                          << " and device " << std::distance(device.begin(), index)
+                          << " (" << FaceArray[0] << ", " << FaceArray[1]
+                          << ", " << FaceArray[2] << ", " << FaceArray[3]
+                          << ")" << std::endl;
                 n_printed++;
             }
         }
@@ -143,5 +154,11 @@ bool check_host_vs_device_TF(const TF_Data & host, const TF_Data & device) {
     if (n_failures_before_early_exit == 0 && n_failures > 0)
         std::cerr << EXCLAIM_EMOJI << "Failed to match " << n_failures
                   << " faces" << std::endl;
+    // Zultradebug
+    /*std::cout << std::endl;
+    for (auto face : device) {
+        std::cout << PUSHPIN_EMOJI << face[0] << ", " << face[1] << ", " << face[2] << ", " << face[3] << std::endl;
+    }
+    */
     return n_failures == 0;
 }

@@ -20,7 +20,7 @@ int main(int argc, char *argv[]) {
     timer.interval("Argument parsing");
 
     // GPU initialization
-    {
+    if (! args.validate()) {
         timer.label_next_interval("GPU context creation with dummy kernel");
         timer.tick();
         KERNEL_WARN(dummy_kernel<<<1 KERNEL_LAUNCH_SEPARATOR 1>>>());
