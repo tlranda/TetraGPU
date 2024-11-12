@@ -59,6 +59,7 @@ set(THREADS_PREFER_PTHREAD_FLAG ON)
 set(CUDA_SEPARABLE_COMPILATION ON)
 set(CMAKE_CUDA_ARCHITECTURES "61")
 #set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+target_compile_options(main PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:--ptxas-options=-v>)
 
 # Set a default build type if none was specified
 set(default_build_type "Release")
