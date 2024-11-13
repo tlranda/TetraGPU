@@ -97,7 +97,17 @@ void make_VF_for_GPU(vtkIdType ** device_vertices,
     Timer vf_translation;
     // Set contiguous data in host memory
     // max_real_value = n_faces * nbVertsInFace
-    std::fill(host_first_faces, host_first_faces+index_face_size, (n_faces+1) * nbVertsInFace);
+    // While std::fill should work, it can segfault on sizes that otherwise work?
+    // KNOWN ISSUE: This size only appears to support up to 262,144 bytes allocation
+    // in subsequent CUDA_MALLOC_HOST when the value is set to 800,000 bytes (100k vertices)
+    // Not sure why -- may readdress later
+    //std::fill(host_first_faces, host_first_faces+index_face_size, (n_faces+1) * nbVertsInFace);
+    {
+        const vtkIdType val = (n_faces+1)*nbVertsInFace;
+        for (vtkIdType i = 0; i < n_verts; i++) {
+            host_first_faces[i] = val;
+        }
+    }
     for (vtkIdType vertex_id = 0, index = 0; vertex_id < n_verts; vertex_id++) {
         for (const FaceData & face : vf_relationship[vertex_id]) {
             // Update first-face index if necessary
