@@ -157,3 +157,33 @@ bool check_host_vs_device_TF(TF_Data & host, TF_Data & device) {
                   << " faces" << std::endl;
     return n_failures == 0;
 }
+
+bool check_host_vs_device_TE(const TE_Data & host, const TE_Data & device) {
+    if (host.size() != device.size()) {
+        std::cerr << EXCLAIM_EMOJI << "Device TE size (" << device.size()
+                  << ") != Host TE size (" << host.size()
+                  << ")" << std::endl;
+        return false;
+    }
+    long long int idx = 0,
+                  n_printed = 0,
+                  n_found = 0,
+                  n_failures = 0,
+                  n_failures_before_early_exit = 0,
+                  n_failures_to_print = MAX_TO_PRINT;
+    for (const auto EdgeArray : host) {
+        if (idx % 1000 == 0)
+            std::cerr << INFO_EMOJI << "Process cell " << idx << " ("
+                      << n_failures << " failures so far "
+                      << 100 * n_failures / static_cast<float>(idx)
+                      << " %)" << std::endl;
+        idx++;
+        /* TBD: Actual validation goes here */
+    }
+    std::cerr << INFO_EMOJI << "Matched " << n_found << " faces" << std::endl;
+    if (n_failures_before_early_exit == 0 && n_failures > 0)
+        std::cerr << EXCLAIM_EMOJI << "Failed to match " << n_failures
+                  << " faces" << std::endl;
+    return n_failures == 0;
+}
+

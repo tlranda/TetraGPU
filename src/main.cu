@@ -100,11 +100,10 @@ int main(int argc, char *argv[]) {
     if (args.build_TE()) {
         // CPU already prepared, GPU
         std::cout << PUSHPIN_EMOJI << "Using GPU to compute TE" << std::endl;
-        std::cerr << EXCLAIM_EMOJI << "Not implemented yet" << std::endl;
-        /*
+        std::cerr << EXCLAIM_EMOJI << "Not validated yet" << std::endl;
         timer.label_next_interval("TE [GPU]");
         timer.tick();
-        std::unique_ptr<TE_Data> device_TE = make_TE_GPU(*TE, *VE, n_edges, args);
+        std::unique_ptr<TE_Data> device_TE = make_TE_GPU(*TV, *VE, TV->nPoints, edgeCount, TV->nCells, args);
         timer.tick_announce();
 
         #ifdef VALIDATE_GPU
@@ -124,7 +123,6 @@ int main(int argc, char *argv[]) {
             timer.tick_announce();
         }
         #endif
-        */
 
         // OPTIONAL: ET (red) [TE' == (TV x VE)']
         if (args.build_ET()) {

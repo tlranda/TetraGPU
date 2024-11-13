@@ -368,3 +368,87 @@ std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
     return TF;
 }
 
+__global__ void TE_kernel(vtkIdType * __restrict__ tv,
+                          vtkIdType * __restrict__ vertices,
+                          vtkIdType * __restrict__ edges,
+                          const vtkIdType n_cells,
+                          const vtkIdType n_edges,
+                          const vtkIdType n_points,
+                          vtkIdType * __restrict__ te) {
+    vtkIdType tid = (blockIdx.x * blockDim.x) + threadIdx.x,
+              edge = (tid % nbEdgesInCell);
+    if (tid >= (n_cells * nbEdgesInCell)) return;
+
+    // Exchange a la TF kernel to find your TID's edge?
+    // Symmetry is broken here -- 4 vertices but 6 edges so below would result in bad reads
+    //vtkIdType cell_vertex = tv[tid];
+}
+// TE = TV x VE
+std::unique_ptr<TE_Data> make_TE_GPU(const TV_Data & TV,
+                                     const VE_Data & VE,
+                                     const vtkIdType n_points,
+                                     const vtkIdType n_edges,
+                                     const vtkIdType n_cells,
+                                     const arguments args) {
+    std::unique_ptr<TE_Data> TE = std::make_unique<TE_Data>();
+    TE->reserve(n_cells);
+
+    // Make ready for GPU
+    vtkIdType * tv_device = nullptr,
+              * vertices_device = nullptr,
+              * edges_device = nullptr;
+    make_TV_for_GPU(&tv_device, TV);
+    make_VE_for_GPU(&vertices_device,
+                    &edges_device,
+                    VE,
+                    n_points,
+                    n_edges);
+
+    // Compute relationship
+    vtkIdType n_to_compute = n_cells * nbEdgesInCell;
+    size_t te_size = sizeof(vtkIdType) * n_to_compute;
+    vtkIdType * te_computed = nullptr,
+              * te_host = nullptr;
+    CUDA_ASSERT(cudaMalloc((void**)&te_computed, te_size));
+    CUDA_ASSERT(cudaMallocHost((void**)&te_host, te_size));
+    dim3 thread_block_size = 1024,
+         grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
+    std::cout << INFO_EMOJI << "Kernel launch configuration is " << grid_size.x
+              << " grid blocks with " << thread_block_size.x << " threads per block"
+              << std::endl;
+    std::cout << INFO_EMOJI << "The mesh has " << n_cells << " cells and "
+              << n_edges << " edges" << std::endl;
+    std::cout << INFO_EMOJI << "Tids >= " << n_to_compute << " should auto-exit ("
+              << (thread_block_size.x * grid_size.x) - n_to_compute << ")"
+              << std::endl;
+    Timer kernel;
+    KERNEL_WARN(TE_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
+                            thread_block_size>>>(tv_device,
+                                vertices_device,
+                                edges_device,
+                                n_cells,
+                                n_edges,
+                                n_points,
+                                te_computed));
+    CUDA_WARN(cudaDeviceSynchronize());
+    kernel.tick();
+    kernel.label_prev_interval("GPU kernel duration");
+
+    // Copy back to host with transformation
+    kernel.tick();
+    CUDA_WARN(cudaMemcpy(te_host, te_computed, te_size, cudaMemcpyDeviceToHost));
+    kernel.tick();
+    kernel.label_prev_interval("GPU Device->Host transfer");
+    kernel.tick();
+    // TODO: Reconfigure for host
+    kernel.tick();
+    kernel.label_prev_interval("GPU Device->Host translation");
+    // Free device memory
+    if (tv_device != nullptr) CUDA_WARN(cudaFree(tv_device));
+    if (vertices_device != nullptr) CUDA_WARN(cudaFree(vertices_device));
+    if (edges_device != nullptr) CUDA_WARN(cudaFree(edges_device));
+    if (te_computed != nullptr) CUDA_WARN(cudaFree(te_computed));
+    if (te_host != nullptr) CUDA_WARN(cudaFreeHost(te_host));
+    return TE;
+}
+

@@ -29,9 +29,11 @@ std::unique_ptr<EV_Data> make_EV_GPU(const VE_Data & edgeTable,
                                      const vtkIdType n_edges,
                                      const arguments args);
 // TE = TV x VE
-std::unique_ptr<TE_Data> make_TE_GPU(const TE_Data & TE,
+std::unique_ptr<TE_Data> make_TE_GPU(const TV_Data & TV,
                                      const VE_Data & VE,
+                                     const vtkIdType n_points,
                                      const vtkIdType n_edges,
+                                     const vtkIdType n_cells,
                                      const arguments args);
 // ET = TE'
 std::unique_ptr<ET_Data> make_ET_GPU(const TE_Data & TE,
@@ -74,6 +76,13 @@ __global__ void TF_kernel(vtkIdType * __restrict__ tv,
                           const vtkIdType n_faces,
                           const vtkIdType n_points,
                           vtkIdType * __restrict__ tf);
+__global__ void TE_kernel(vtkIdType * __restrict__ tv,
+                          vtkIdType * __restrict__ vertices,
+                          vtkIdType * __restrict__ edges,
+                          const vtkIdType n_cells,
+                          const vtkIdType n_edges,
+                          const vtkIdType n_points,
+                          vtkIdType * __restrict__ te);
 
 #endif
 

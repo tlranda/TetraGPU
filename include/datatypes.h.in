@@ -85,7 +85,8 @@ typedef struct argstruct {
     std::string fileName = "tiny.vtu";
     int threadNumber = 1;
     // Endian-ness may mean defaults need to be set in LSB->MSB order
-    std::bitset<7> arg_flags{"00100001"};
+    // TE starts on 3rd LSB
+    std::bitset<7> arg_flags{"00000101"};
     std::map<int,std::string> flag_names = {
         {0, "validate"},
         {1, "TE"},
@@ -94,6 +95,13 @@ typedef struct argstruct {
         {4, "TF"},
         {5, "FV"},
         {6, "FE"}
+        //{7, "FT"},
+        //{8, "EF"},
+        //{9, "VT"},
+        //{10, "TT"},
+        //{11, "FF"},
+        //{12, "EE"},
+        //{13, "VV"}
     };
     bool validate(void) const { return arg_flags[0]; }
     bool build_TE(void) const { return arg_flags[1]; }
@@ -102,15 +110,15 @@ typedef struct argstruct {
     bool build_TF(void) const { return arg_flags[4]; }
     bool build_FV(void) const { return arg_flags[5]; }
     bool build_FE(void) const { return arg_flags[6]; }
-         /* MIA
-         build_FT
-         build_EF
-         build_VT
-         build_TT
-         build_FF
-         build_EE
-         build_VV
-         */
+    /* MIA
+    bool build_FT(void) const { return arg_flags[7]; }
+    bool build_EF(void) const { return arg_flags[8]; }
+    bool build_VT(void) const { return arg_flags[9]; }
+    bool build_TT(void) const { return arg_flags[10]; }
+    bool build_FF(void) const { return arg_flags[11]; }
+    bool build_EE(void) const { return arg_flags[12]; }
+    bool build_VV(void) const { return arg_flags[13]; }
+     */
 } arguments;
 typedef std::map<const char*, std::string> option_map;
 
