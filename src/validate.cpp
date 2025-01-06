@@ -178,12 +178,40 @@ bool check_host_vs_device_TE(const TE_Data & host, const TE_Data & device) {
                       << 100 * n_failures / static_cast<float>(idx)
                       << " %)" << std::endl;
         idx++;
-        /* TBD: Actual validation goes here */
+        auto index = std::find(begin(device), end(device), EdgeArray);
+        if (index == std::end(device)) {
+            n_failures++;
+            if (n_failures <= n_failures_to_print) {
+                std::cerr << WARN_EMOJI << "Could not find set of edges ("
+                    << EdgeArray[0] << ", " << EdgeArray[1] << ", "
+                    << EdgeArray[2] << ", " << EdgeArray[3] << ") in device TE!"
+                    << std::endl;
+                std::cerr << WARN_EMOJI << "Expected match at index " << idx-1
+                    << " between host (" << EdgeArray[0] << ", "
+                    << EdgeArray[1] << ", " << EdgeArray[2] << ","
+                    << EdgeArray[3] << ") and device (" << device[idx-1][0]
+                    << ", " << device[idx-1][1] << ", " << device[idx-1][2]
+                    << ", " << device[idx-1][3] << ")" << std::endl;
+                n_printed++;
+            }
+            if (n_failures_before_early_exit > 0 &&
+                    n_failures >= n_failures_before_early_exit) return false;
+        }
+        else {
+            n_found++;
+            if (n_printed < 10) {
+                std::cout << OK_EMOJI << "Matched edge set between host and device ("
+                    << EdgeArray[0] << ", " << EdgeArray[1] << ", "
+                    << EdgeArray[2] << ", " << EdgeArray[3] << ")"
+                    << std::endl;
+                n_printed++;
+            }
+        }
     }
-    std::cerr << INFO_EMOJI << "Matched " << n_found << " faces" << std::endl;
+    std::cerr << INFO_EMOJI << "Matched " << n_found << " cells" << std::endl;
     if (n_failures_before_early_exit == 0 && n_failures > 0)
         std::cerr << EXCLAIM_EMOJI << "Failed to match " << n_failures
-                  << " faces" << std::endl;
+                  << " cells" << std::endl;
     return n_failures == 0;
 }
 

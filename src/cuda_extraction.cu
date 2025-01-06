@@ -25,6 +25,7 @@ void make_TV_for_GPU(vtkIdType ** device_tv,
 
 void make_VE_for_GPU(vtkIdType ** device_vertices,
                      vtkIdType ** device_edges,
+                     vtkIdType ** device_first_vertex,
                            // vector of vectors of edge IDs
                      const VE_Data & ve_relationship,
                      const vtkIdType n_verts,
@@ -33,18 +34,33 @@ void make_VE_for_GPU(vtkIdType ** device_vertices,
     // Size determinations
     size_t vertices_size = sizeof(vtkIdType) * n_edges * nbVertsInEdge,
            // Can technically be half-sized, but duplicate for now
-           edges_size = sizeof(vtkIdType) * n_edges * nbVertsInEdge;
+           edges_size = sizeof(vtkIdType) * n_edges * nbVertsInEdge,
+           index_vertex_size = sizeof(vtkIdType) * n_verts;
     // Allocations
     CUDA_ASSERT(cudaMalloc((void**)device_vertices, vertices_size));
     CUDA_ASSERT(cudaMalloc((void**)device_edges, edges_size));
+    CUDA_ASSERT(cudaMalloc((void**)device_first_vertex, index_vertex_size));
     vtkIdType * host_vertices = nullptr,
-              * host_edges = nullptr;
+              * host_edges = nullptr,
+              * host_first_vertices = nullptr;
     CUDA_ASSERT(cudaMallocHost((void**)&host_vertices, vertices_size));
     CUDA_ASSERT(cudaMallocHost((void**)&host_edges, edges_size));
+    CUDA_ASSERT(cudaMallocHost((void**)&host_first_vertices, index_vertex_size));
 
     Timer ve_translation;
     // Set contiguous data in host memory
-    for (vtkIdType vertex_id = 0, index = 0; vertex_id < n_verts; vertex_id++) {
+    // Index defaults to END-OF-LIST to help with scanning
+    // while std::fill should work, it can segfault on sizes (see the similar
+    // code in make_VF_for_GPU() for further explanation; same bugfix should
+    // apply here if one is found
+    {
+        const vtkIdType val = (n_verts+1)*nbVertsInEdge;
+        for (vtkIdType i = 0; i < n_verts; i++) {
+            host_first_vertices[i] = val;
+        }
+    }
+    for (vtkIdType vertex_id = 0, index = 0, first = 0; vertex_id < n_verts; vertex_id++) {
+        host_first_vertices[first++] = index;
         for (const EdgeData & edge : ve_relationship[vertex_id]) {
             // Pack low edge / ID
             host_edges[index] = edge.id;
@@ -64,11 +80,14 @@ void make_VE_for_GPU(vtkIdType ** device_vertices,
                          vertices_size, cudaMemcpyHostToDevice));
     CUDA_WARN(cudaMemcpy(*device_edges, host_edges,
                          edges_size, cudaMemcpyHostToDevice));
+    CUDA_WARN(cudaMemcpy(*device_first_vertex, host_first_vertices,
+                         index_vertex_size, cudaMemcpyHostToDevice));
     ve_translation.tick();
     ve_translation.label_interval(0, "VE Host->GPU Translation");
     ve_translation.label_interval(1, "VE Host->GPU Data Transfer");
     CUDA_WARN(cudaFreeHost(host_vertices));
     CUDA_WARN(cudaFreeHost(host_edges));
+    CUDA_WARN(cudaFreeHost(host_first_vertices));
 }
 
 void make_VF_for_GPU(vtkIdType ** device_vertices,
@@ -161,8 +180,8 @@ void make_VF_for_GPU(vtkIdType ** device_vertices,
     CUDA_WARN(cudaFreeHost(host_first_faces));
 }
 
-__global__ void EV_kernel(vtkIdType * __restrict__ vertices,
-                          vtkIdType * __restrict__ edges,
+__global__ void EV_kernel(const vtkIdType * __restrict__ vertices,
+                          const vtkIdType * __restrict__ edges,
                           const vtkIdType n_edges,
                           vtkIdType * __restrict__ ev) {
     vtkIdType tid = (blockDim.x * blockIdx.x) + threadIdx.x,
@@ -182,13 +201,17 @@ std::unique_ptr<EV_Data> make_EV_GPU(const VE_Data & edgeTable,
 
     // Marshall data to GPU
     vtkIdType * vertices_device = nullptr,
-              * edges_device = nullptr;
+              * edges_device = nullptr,
+              * index_device = nullptr;
     make_VE_for_GPU(&vertices_device,
                     &edges_device,
+                    &index_device,
                     edgeTable,
                     n_points,
                     n_edges
                     );
+    // Free index_device as EV does not need it
+    if (index_device != nullptr) CUDA_WARN(cudaFree(index_device));
     // Compute the relationship
     size_t ev_size = sizeof(vtkIdType) * n_edges * nbVertsInEdge;
     vtkIdType * ev_computed = nullptr,
@@ -239,10 +262,10 @@ std::unique_ptr<EV_Data> make_EV_GPU(const VE_Data & edgeTable,
     return edgeList;
 }
 
-__global__ void TF_kernel(vtkIdType * __restrict__ tv,
-                          vtkIdType * __restrict__ vertices,
-                          vtkIdType * __restrict__ faces,
-                          vtkIdType * __restrict__ first_faces,
+__global__ void TF_kernel(const vtkIdType * __restrict__ tv,
+                          const vtkIdType * __restrict__ vertices,
+                          const vtkIdType * __restrict__ faces,
+                          const vtkIdType * __restrict__ first_faces,
                           const vtkIdType n_cells,
                           const vtkIdType n_faces,
                           const vtkIdType n_points,
@@ -368,20 +391,133 @@ std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
     return TF;
 }
 
-__global__ void TE_kernel(vtkIdType * __restrict__ tv,
-                          vtkIdType * __restrict__ vertices,
-                          vtkIdType * __restrict__ edges,
+__device__ __inline__ void te_combine(vtkIdType quad0, vtkIdType quad1,
+                                      vtkIdType quad2, vtkIdType quad3,
+                                      const vtkIdType laneID,
+                                      vtkIdType * __restrict__ te,
+                                      const vtkIdType * __restrict__ vertices,
+                                      const vtkIdType * __restrict__ edges,
+                                      const vtkIdType n_points,
+                                      const vtkIdType * __restrict__ index) {
+    // Within each sub-group, assign unique combination of vertex pairs from quad
+    // Then look up the edge ID in VE and assign it to TE
+    /* Pattern:
+       0: q0 - q1
+       1: q1 - q2
+       2: q2 - q3
+       3: q0 - q2
+       4: q1 - q3
+       5: q0 - q3
+    */
+    vtkIdType left_vertex = quad0, // 0, 3, 5
+              right_vertex = quad3; // 2, 4, 5
+    if (laneID == 1 || laneID == 2 || laneID == 4) {
+        if (laneID == 2) left_vertex = quad2;
+        else /* 1, 4 */ left_vertex = quad1;
+    }
+    if (laneID == 0 || laneID == 1 || laneID == 3) {
+        if (laneID == 0) right_vertex = quad1;
+        else /* 1, 3 */ right_vertex = quad2;
+    }
+    // Ensure lowest index is the left one
+    if (left_vertex > right_vertex) {
+        vtkIdType swap = left_vertex;
+        left_vertex = right_vertex;
+        right_vertex = swap;
+    }
+
+    __syncthreads();
+    // !! Scan VE for first edge match -- divergence expected !!
+    // There is no OOB guard on the for-loop condition as the LOWER index is
+    // explicitly less than the HIGHER index, ergo index[left_vertex+1] is
+    // definitely in-bounds
+    for (vtkIdType i = index[left_vertex]; i < index[left_vertex+1]; i+= 2) {
+        // vertices = [low-edge, high-edge] x n-Edges
+        // edges =    [edge id , edge id  ] x n-Edges
+        if (vertices[i+1] == right_vertex) {
+            // TE is already shifted for every thread, so just write to your
+            // laneID and that should mark the edge
+            te[laneID] = edges[i];
+            break;
+        }
+    }
+    __syncthreads();
+}
+
+__global__ void TE_kernel(const vtkIdType * __restrict__ tv,
+                          const vtkIdType * __restrict__ vertices,
+                          const vtkIdType * __restrict__ edges,
+                          const vtkIdType * __restrict__ first_index,
                           const vtkIdType n_cells,
                           const vtkIdType n_edges,
                           const vtkIdType n_points,
                           vtkIdType * __restrict__ te) {
-    vtkIdType tid = (blockIdx.x * blockDim.x) + threadIdx.x,
-              edge = (tid % nbEdgesInCell);
-    if (tid >= (n_cells * nbEdgesInCell)) return;
+    // LAUNCH WITH 6 THREADS PER CELL, LOSE 2 THREADS PER WARP (32) WHICH
+    // REQUIRES OVERSUBSCRIPTION IMMEDIATELY
+    // ALSO MUST ALLOCATE ENOUGH SHARED MEMORY FOR KERNEL.
 
-    // Exchange a la TF kernel to find your TID's edge?
-    // Symmetry is broken here -- 4 vertices but 6 edges so below would result in bad reads
-    //vtkIdType cell_vertex = tv[tid];
+    // TAKE CARE THAT CONSTANTS ARE WRITTEN FOR UNROLLING 3 LOOP ITERATIONS,
+    // IF UNROLLING MORE OR LESS, THESE CONSTANTS MUST BE UPDATED
+    extern __shared__ vtkIdType sh_scratch[];
+
+    vtkIdType tid = (blockIdx.x * blockDim.x) + threadIdx.x,
+              warpID = (threadIdx.x % 32),
+              laneID = warpID % 6,
+              laneDepth = 3*(((tid / 32)*5) + (warpID / 6)),
+              shLaneDepth = laneDepth % 480,
+              edge = (tid % nbEdgesInCell);
+    // Early-exit threads reading beyond #cells at base index AND 2 straggler threads per warp
+    if (laneDepth >= n_cells || warpID > 29) return;
+
+    // Push output pointer TE per-thread to its writing position
+    te += (laneDepth * 6);
+
+    // Read FIRST value from global memory --> shared
+    // laneDepth *= 4 to use vector-addressing; not set permanently as the
+    // cellID is nice to hold onto for later
+    vtkIdType read_indicator = n_cells-laneDepth-1;
+    if (read_indicator >= 1 || (read_indicator == 0 && laneID < 4)) {
+        sh_scratch[(shLaneDepth*6)+laneID] = tv[(laneDepth*4)+laneID];
+    }
+    __syncthreads();
+
+    // UNROLL 1: First quadruplet is guaranteed to be useful due to early-exit threads no longer being present
+    vtkIdType quad0 = sh_scratch[(shLaneDepth*6)  ],
+              quad1 = sh_scratch[(shLaneDepth*6)+1],
+              quad2 = sh_scratch[(shLaneDepth*6)+2],
+              quad3 = sh_scratch[(shLaneDepth*6)+3];
+    // All 6 combinations of values need to be made to get the TE relationship,
+    // but the edgeID has to be looked up in VE relationship
+    te_combine(quad0,quad1,quad2,quad3, laneID, te, vertices, edges, n_points,
+               first_index);
+
+    // UNROLL 2: Second quadruplet is half-read already; exit if NOT useful
+    if (read_indicator == 0) return;
+    // Adjust pointers to not overwrite previous iteration's data
+    te += 6;
+    quad0 = sh_scratch[(shLaneDepth*6)+4];
+    quad1 = sh_scratch[(shLaneDepth*6)+5];
+    __syncthreads();
+    // Continue reading for unrolls 2 & 3
+    if (read_indicator > 1 || (read_indicator == 1 & laneID < 2)) {
+        sh_scratch[(shLaneDepth*6)+laneID] = tv[(laneDepth*4)+laneID+6];
+    }
+    __syncthreads();
+    quad2 = sh_scratch[(shLaneDepth*6)  ];
+    quad3 = sh_scratch[(shLaneDepth*6)+1];
+    te_combine(quad0,quad1,quad2,quad3, laneID, te, vertices, edges, n_points,
+               first_index);
+
+    // UNROLL 3: Third quadruplet is read; early exit if NOT useful
+    if (read_indicator == 1) return;
+    // Adjust pointers to not overwrite previous iteration's data
+    te += 6;
+    quad0 = sh_scratch[(shLaneDepth*6)+2];
+    quad1 = sh_scratch[(shLaneDepth*6)+3];
+    quad2 = sh_scratch[(shLaneDepth*6)+4];
+    quad3 = sh_scratch[(shLaneDepth*6)+5];
+    te_combine(quad0,quad1,quad2,quad3, laneID, te, vertices, edges, n_points,
+               first_index);
 }
 // TE = TV x VE
 std::unique_ptr<TE_Data> make_TE_GPU(const TV_Data & TV,
@@ -396,13 +532,16 @@ std::unique_ptr<TE_Data> make_TE_GPU(const TV_Data & TV,
     // Make ready for GPU
     vtkIdType * tv_device = nullptr,
               * vertices_device = nullptr,
-              * edges_device = nullptr;
+              * edges_device = nullptr,
+              * index_device = nullptr;
     make_TV_for_GPU(&tv_device, TV);
     make_VE_for_GPU(&vertices_device,
                     &edges_device,
+                    &index_device,
                     VE,
                     n_points,
-                    n_edges);
+                    n_edges
+                    );
 
     // Compute relationship
     vtkIdType n_to_compute = n_cells * nbEdgesInCell;
@@ -411,21 +550,57 @@ std::unique_ptr<TE_Data> make_TE_GPU(const TV_Data & TV,
               * te_host = nullptr;
     CUDA_ASSERT(cudaMalloc((void**)&te_computed, te_size));
     CUDA_ASSERT(cudaMallocHost((void**)&te_host, te_size));
-    dim3 thread_block_size = 1024,
-         grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
-    std::cout << INFO_EMOJI << "Kernel launch configuration is " << grid_size.x
-              << " grid blocks with " << thread_block_size.x << " threads per block"
+
+    // Set up launch configuration for the kernel
+    const vtkIdType N_THREADS = 416,
+                    /*
+                       6 edges required per cell (1 edge : 1 thread)
+                       Up to 3 cells unrolled in each group of threads
+                       -2 threads per warp of 32 threads for warp alignment on factor of 6
+                       480 cells comes from:
+                       6*((480+2)//3) == 6 * 160 = 960 work with unrolling
+                       ((960+29)//30)*32 == 32*32 = 1024 threads in block
+
+                       Max 1024 threads per block in hardware, increasing to 481 threads requires a new block for the warp
+
+                       -- however, register usage can pose an even greater problem for us --
+
+                       1024 threads * 78 registers (current HW) = 79,872 / 65,536 registers demanded
+                       Our early-exits cost us in that the CUDA launch API has
+                       no clue that we're going to honor that
+
+                       At 78 registers, we can use up to 840 threads in a block
+                       Round this down to 832 == 26*32 (fullwarp alignment)
+                       Each warp has 5 groups (26*5 == 130 single-cells), with
+                       3 unrolled for 390 cells per block after unrolling
+
+                       The above isn't working on this hardware, idk let's cut
+                       it in half. 416 threads -> 13 full warps AKA 65 groups
+                       unrolling to 195 cells in a block
+                    */
+                    cells_per_block = 195,
+                    SHARED_PER_BLOCK = cells_per_block * 6 * sizeof(vtkIdType);
+    vtkIdType N_BLOCKS = (n_cells+cells_per_block-1)/cells_per_block;
+
+    std::cout << INFO_EMOJI << "Kernel launch configuration is " << N_BLOCKS
+              << " grid blocks with " << N_THREADS << " threads per block"
+              << " and " << SHARED_PER_BLOCK << " bytes shmem per block"
               << std::endl;
     std::cout << INFO_EMOJI << "The mesh has " << n_cells << " cells and "
               << n_edges << " edges" << std::endl;
-    std::cout << INFO_EMOJI << "Tids >= " << n_to_compute << " should auto-exit ("
-              << (thread_block_size.x * grid_size.x) - n_to_compute << ")"
-              << std::endl;
+    if (cudaFuncSetAttribute(TE_kernel,
+                             cudaFuncAttributeMaxDynamicSharedMemorySize,
+                             49152/*SHARED_PER_BLOCK*/) != cudaSuccess) {
+        std::cerr << WARN_EMOJI << "Could not set max dynamic shared memory size to "
+                  << SHARED_PER_BLOCK << " bytes" << std::endl;
+    }
     Timer kernel;
-    KERNEL_WARN(TE_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
-                            thread_block_size>>>(tv_device,
+    KERNEL_WARN(TE_kernel<<<N_BLOCKS KERNEL_LAUNCH_SEPARATOR
+                            N_THREADS KERNEL_LAUNCH_SEPARATOR
+                            SHARED_PER_BLOCK>>>(tv_device,
                                 vertices_device,
                                 edges_device,
+                                index_device,
                                 n_cells,
                                 n_edges,
                                 n_points,
@@ -440,7 +615,13 @@ std::unique_ptr<TE_Data> make_TE_GPU(const TV_Data & TV,
     kernel.tick();
     kernel.label_prev_interval("GPU Device->Host transfer");
     kernel.tick();
-    // TODO: Reconfigure for host
+    // Reconfigure for host
+    for (vtkIdType c = 0; c < n_cells; ++c) {
+        TE->emplace_back(std::array<vtkIdType,nbEdgesInCell>{
+                te_host[(4*c)  ], te_host[(4*c)+1],
+                te_host[(4*c)+2], te_host[(4*c)+3]
+                });
+    }
     kernel.tick();
     kernel.label_prev_interval("GPU Device->Host translation");
     // Free device memory
