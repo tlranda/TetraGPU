@@ -195,7 +195,8 @@ bool check_host_vs_device_TE(const TE_Data & host, const TE_Data & device) {
                 if (n_printed < 10) {
                     std::cout << OK_EMOJI << "Matched edge set between host and device ("
                         << EdgeArray[0] << ", " << EdgeArray[1] << ", "
-                        << EdgeArray[2] << ", " << EdgeArray[3] << ")"
+                        << EdgeArray[2] << ", " << EdgeArray[3] << ", "
+                        << EdgeArray[4] << ", " << EdgeArray[5] << ")"
                         << std::endl;
                     n_printed++;
                 }
@@ -227,7 +228,8 @@ bool check_host_vs_device_TE(const TE_Data & host, const TE_Data & device) {
             if (n_printed < 10) {
                 std::cout << OK_EMOJI << "Matched edge set between host and device ("
                     << EdgeArray[0] << ", " << EdgeArray[1] << ", "
-                    << EdgeArray[2] << ", " << EdgeArray[3] << ")"
+                    << EdgeArray[2] << ", " << EdgeArray[3] << ", "
+                    << EdgeArray[4] << ", " << EdgeArray[5] << ")"
                     << std::endl;
                 n_printed++;
             }
