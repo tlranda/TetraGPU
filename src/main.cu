@@ -187,6 +187,7 @@ int main(int argc, char *argv[]) {
 
     // OPTIONAL: TF (green) [TV x VF]
     if (args.build_TF()) {
+        std::cout << PUSHPIN_EMOJI << "Using GPU to compute TF" << std::endl;
         timer.label_next_interval("TF [GPU]");
         timer.tick();
         std::unique_ptr<TF_Data> device_TF = make_TF_GPU(*TV, *VF, TV->nPoints,
@@ -213,6 +214,7 @@ int main(int argc, char *argv[]) {
 
     // OPTIONAL: FV (green) [VF']
     if (args.build_FV()) {
+        std::cout << PUSHPIN_EMOJI << "Using GPU to compute FV" << std::endl;
         std::cerr << EXCLAIM_EMOJI << "Not implemented yet" << std::endl;
         /*
         timer.label_next_interval("FV [GPU]");
@@ -241,6 +243,7 @@ int main(int argc, char *argv[]) {
 
     // OPTIONAL: FE (green) [VF' x VE]
     if (args.build_FE()) {
+        std::cout << PUSHPIN_EMOJI << "Using GPU to compute FE" << std::endl;
         std::cerr << EXCLAIM_EMOJI << "Not implemented yet" << std::endl;
         /*
         timer.label_next_interval("FE [GPU]");
