@@ -8,6 +8,24 @@
 #include "metrics.h" // Timer class
 #include "emoji.h" // Emoji definitions
 
+/* Drives relationship creation and possibly validation (if enabled and called
+   for). The dummy kernel is present to ensure CUDA context creation does not
+   interfere with metric timing etc regardless of how you decide to collect
+   the performance data.
+
+   Data is loaded via VTK format (Only .vtu file type is tested (unstructured
+   tetrahedral mesh); I can generate the ascii one but valid binary files
+   should be OK too).
+
+   We repeat the pattern as follows:
+    * Create any mandatory data on CPU (ie: required by GPU to compute target
+        relationship)
+    * Elect to create the CPU version of the data (raw performance differential
+        and possibly used for validation later on)
+    * Create the GPU version of the data and retrieve its host-arranged version
+    * If validating, validate the GPU answer using CPU results
+*/
+
 __global__ void dummy_kernel(void) {
     int tid = (blockIdx.x * blockDim.x) + threadIdx.x;
 }

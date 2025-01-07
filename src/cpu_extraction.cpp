@@ -1,7 +1,28 @@
 #include "cpu_extraction.h"
 
 /*
- * Relationship extracting functions
+ * Relationship extracting functions using CPU only.
+ * For functions named "make_X_and_Y", we're intentionally defining two
+ * relationships at the same time (usually because one defines indexing IDs
+ * and the other is related to TV, so we may as well map both together at the
+ * same time).
+ *
+ * The vtkIdDType return values inform the caller of how many unique IDs were
+ * minted during relationship creation (ie: make_TE_and_VE informs the caller
+ * of the number of unique edges via its return value).
+ *
+ * The "elective_make_X" functions create the unique pointer WITHIN the
+ * function's stack, so you need to receive this memory in the caller's frame
+ * or it will be deleted. These functions do not need to be called in final
+ * versions of the program as the GPU should take over their creation, but they
+ * are provided as CPU-sane versions of the relationship definition to help
+ * check the validity of GPU results.
+ *
+ * These functions do not make any particular considerations about the mesh for
+ * subsequent GPU performance, but if your TV relationship is set up such that
+ * minimal vertex ID difference means nearby vertices, you're likely setting
+ * the GPU up to get as much benefit from the ID/mapping and memory access
+ * pattern as we would reasonably be able to guarantee.
  */
 
 vtkIdType make_TE_and_VE(const TV_Data & tv_relationship,

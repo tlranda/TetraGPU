@@ -1,5 +1,30 @@
 #include "metrics.h"
 
+/* Simple class to help with timing things within source code via trivial API.
+   It should be as easy as:
+        Timer my_timer; // Automatically denotes timer create time, so place
+                        // it immediately before your timed section
+        my_timer.tick(); // Close the timing interval
+   The timer will flush all intervals (including an open interval, if it exists)
+   upon its deletion
+
+  You can also do fun things like give text labels to the timer via the label
+  functions.
+        my_timer.label_prev_interval("testing 123"); // from prior example
+        my_timer.label_next_interval("future ooh"); // label in advance of tick open/closed
+        my_timer.label_interval(999,"when we get here it will be cool"); // label the 999th interval, why not
+  If you want to keep the same timer for a bunch of things, you can give it the
+  constructor argument "false" (boolean type) to not immediately start the first
+  tick. Just call .tick() when you're ready. The same timer can hold many
+  intervals and you don't need to worry about flushing them too much, but you
+  can manually flush via .interval(X) with X as:
+        * A string, to refer to the previous interval and flush it
+        * An integer, to flush the exact interval
+  Note that flushing intervals does not delete any data! If you're worried
+  about memory you should flush via deleting the timer object or upgrade this
+  class to enable content deletion while persisting the object.
+*/
+
 // Constructors
 Timer::Timer(void) { this->tick(); }
 Timer::Timer(bool deferred) { if (!deferred) this->tick(); }

@@ -1,5 +1,61 @@
 #include "cuda_extraction.h"
 
+/* There are a few classes of functions here and general design patterns to be
+   aware of:
+    * "make_X_for_GPU" functions allocate GPU-side memory for X via a reference
+        to a pointer on the caller's frame and use the host to populate
+        appropriate values. No kernels, just remapping and data transfer.
+    * "make_X_GPU" functions use GPU-side memory and kernels to create X using
+        the GPU. Currently, these functions remap the memory to host and clean
+        up the device allocation before exiting, but real applications may want
+        the GPU-side relationship to persist (or to not be remapped in the same
+        manner).
+    * "X_kernel" functions are the device-side kernels that create new
+        relationships using the GPU. They are called by the corresponding X's
+        "make_X_GPU" kernel. All of the kernels attempt to utilize the GPU's
+        thread scalability to get massive parallelism even if the linear
+        algebra approach is very sparse. Our hope is that you can tie these
+        functions together (perhaps as inlines) to make a device-contained
+        relationship remap fit within the algorithm kernel with great locality.
+
+  As a general note, everything is currently scheduled on the default stream;
+  you may want to take care to adjust cudaMemcpy and kernel invokations if
+  overlapping is intended down the line.
+
+  So far, we've found the "vectorized" kernel approach to be promising enough
+  for relationship precompute. However, the approach is not trivial and
+  requires several key strategies which you may want to re-use as you expand
+  the relationship coverage.
+    * "EV_kernel" shows a basic transpose from VE (split via "make_VE_for_GPU")
+        and has coalesced reads with poor write ordering. You'll get one or the
+        other to coalesce, and hardware generally optimizes for reads better.
+    * "TF_kernel" shows a register-shuffle for exchanging global reads without
+        shared memory. This ONLY works if you can do exchanges on powers-of-two
+        exactly and get all necessary information. It then has a diverging
+        block to handle thread-face assignment and a less-diverging scan lookup
+        through the precomputed VF data to locate the correct face ID.
+    * "TE_kernel" shows a shared-memory approach for exchanging global reads
+        when it's necessary to do so on non-powers-of-two subsets. It also
+        unrolls its relationship extraction to make more usage out of the
+        requested shared memory. This unrolling pattern can technically be
+        looped, but you have to adjust all constants to properly account for
+        doing that (there are a bunch!). Pay special attention to definitions
+        and comments that detail how these constants should be determined and
+        adjusted for various constraints on the register file and occupancy.
+
+  I've also run into a small number of strange behaviors here that are handled
+  by workarounds for now; if you find a better way to do it, be vigilant to
+  ensure all workarounds are replaced with the better behavior:
+    * std::fill for host-side memory in "make_X_for_GPU" should work, but seems
+        to segfault on certain sizes that our tests definitely reach and exceed.
+        It may have something to do with working on pointers from
+        CUDA_MALLOC_HOST, but root-causes were not identified and instead we
+        see if the compiler understands the intent and can pitch in
+        optimizations on the trivial loop with constant value assignments.
+        Feel free to add #pragma unroll etc but I don't think they're present
+        yet.
+*/
+
 void make_TV_for_GPU(vtkIdType ** device_tv,
                            // vector of array of vertices in a tetra
                      const TV_Data & tv_relationship) {

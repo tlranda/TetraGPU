@@ -1,5 +1,9 @@
 #include "argparse.h"
 
+/* Handles logic for retrieving command line arguments; if you want to change
+ * a default argument value, you should hop over to include/datatypes.h.in!
+*/
+
 std::string usage(char* argv0, const struct option* options,
                   const arguments & args, const option_map & help_info,
                   const option_map & metavars) {

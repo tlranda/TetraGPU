@@ -1,5 +1,20 @@
 #include "vtk_load.h"
 
+/* This is largely adapted from Guoxi's demo he kindly provided on using VTK.
+   Our only goal is to get the .vtu mesh into memory and format it as a TV
+   array in a manner that I like to use in all subsequent parts of the program.
+   It may or may not be optimal and may or may not check every error correctly,
+   but we do try to check for errors as able to at least flag the reader that
+   things might not be OK.
+
+   For now, I'm only outputting error message text and we just proceed into
+   what is likely undefined behavior (crash expected) very soon when the
+   processing here fails. In my experience, VTK itself likely hits this
+   behavior as I attempt to construct TV, which is fine. We weren't going to
+   go much further anyways and the trace/my message are usually sufficient
+   warning.
+*/
+
 int checkCellTypes(vtkPointSet *object) {
     /*
      * Check a PointSet to ensure that it meets the minimum type requirements

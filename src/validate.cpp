@@ -1,6 +1,40 @@
 #include "validate.h"
 
+/* Validate GPU ("device") relationships via the provided CPU ("host") version
+
+   Most data is permutable -- ie it doesn't matter what order vertices appear
+   in an edge, as long as all vertices are present and correct.
+   You can sort within every entry to make this easy at guaranteed up-front
+   cost, or you can check permutations whenever you fail to locate the expected
+   permutation. Up to you, validation is not expected to be highly performant
+   but it should be CORRECT.
+
+   To aid myself, I usually have the following pattern of checks/debug in all
+   functions
+    * Check the size first; it's the obvious way to know something went horribly
+      wrong
+    * Print the first "MAX_TO_PRINT" entries all the time. Makes you feel OK that
+      things are proceeding as they should.
+    * Print errors EVERY TIME they occur, up to "MAX_TO_PRINT" (OK values in
+      the first "MAX_TO_PRINT" checks do not count against this)
+    * You can tap out early after "MAX_ERRORS" are observed to prevent flooding
+      the console when things are very bad.
+    * If you track permutations, it can be nice to report that, but it is not
+      required. Sometimes I am delusional and think I'll use it to make
+      validation cohere with the device order more but that's not going to
+      happen.
+    * Use std::find() on the device memory to look for host values. The host
+      WILL have every value, the device should generally agree on indexing
+      order but it doesn't strictly have to. Usually not finding it would mean
+      that you are looking for permuted orders at the expected index, don't go
+      overboard looking for permutations across the entire set of returned
+      values.
+    * Return the boolean value true when OK, false when at least 1 error is
+      found.
+*/
+
 const int MAX_TO_PRINT = 10;
+const int MAX_ERRORS = 0;
 
 bool check_host_vs_device_EV(const EV_Data & host_EV,
                              const EV_Data & device_EV) {
@@ -18,7 +52,7 @@ bool check_host_vs_device_EV(const EV_Data & host_EV,
                  n_found = 0,
                  n_failures = 0,
                  n_inverted = 0,
-                 n_failures_before_early_exit = 0,
+                 n_failures_before_early_exit = MAX_ERRORS,
                  n_failures_to_print = MAX_TO_PRINT;
     for (const auto EV_Array : host_EV) {
         if (idx % 1000 == 0)
@@ -101,7 +135,7 @@ bool check_host_vs_device_TF(TF_Data & host, TF_Data & device) {
                   n_printed = 0,
                   n_found = 0,
                   n_failures = 0,
-                  n_failures_before_early_exit = 0,
+                  n_failures_before_early_exit = MAX_ERRORS,
                   n_failures_to_print = MAX_TO_PRINT;
     for (const auto FaceArray : host) {
         if (idx % 1000 == 0)
@@ -169,7 +203,7 @@ bool check_host_vs_device_TE(const TE_Data & host, const TE_Data & device) {
                   n_printed = 0,
                   n_found = 0,
                   n_failures = 0,
-                  n_failures_before_early_exit = 0,
+                  n_failures_before_early_exit = MAX_ERRORS,
                   n_failures_to_print = MAX_TO_PRINT;
     for (const auto EdgeArray : host) {
         if (idx % 1000 == 0)
