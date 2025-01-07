@@ -6,11 +6,20 @@
 # RUNTIME_ARGS := Additional arguments to every single input file tested
 # VALIDATE := Use the validation build and add --validate to runtime arguments
 # DEBUG := Use Debug build type
+# VTK_DIR := Help CMake find the VTK install directory
+# CUDA_DIR := Help CMake find the CUDA install directory
+# TETRA_CMAKE_ARGS := Additional arguments to CMake (ie: -DCMAKE_CUDA_HOST_COMPILER, -DCMake_CXX_COMPILER)
 
 validate="${VALIDATE-0}";
 echo "validate='${validate}'";
 debug="${DEBUG-0}";
 echo "debug='${debug}'";
+vtk_dir="${VTK_DIR-0}";
+echo "VTK_DIR='${vtk_dir}'";
+cuda_dir="${CUDA_DIR-0}";
+echo "CUDA_DIR='${cuda_dir}'";
+cmake_args="${TETRA_CMAKE_ARGS-0}";
+echo "cmake_args='${cmake_args}'";
 
 if [ $# -eq 0 ]; then
     set -- "${@:1}" "Bucket.vtu";
@@ -31,7 +40,18 @@ else
     build_type="Debug";
 fi
 
-cmake_command="CUDA_DIR=/usr/local/cuda-12.2 VTK_DIR=/home/tlranda/tools/VTK/VTK-9.3.1/build_gcc7 cmake -B ${build_dir} -DCMAKE_CUDA_HOST_COMPILER=/home/tlranda/tools/gcc7/bin/g++ -DCMAKE_CXX_COMPILER=/home/tlranda/tools/gcc7/bin/g++ -DCMAKE_BUILD_TYPE=${build_type}";
+if [[ "${vtk_dir}" != "0" ]]; then
+    cmake_command="VTK_DIR=${vtk_dir}";
+else
+    cmake_command="";
+fi
+if [[ "${cuda_dir}" != "0" ]]; then
+    cmake_command="${cmake_command} CUDA_DIR=${cuda_dir}";
+fi
+cmake_command="${cmake_command} cmake -B ${build_dir} -DCMAKE_BUILD_TYPE=${build_type}";
+if [[ "${cmake_args}" != "0" ]]; then
+    cmake_command="${cmake_command} ${cmake_args}";
+fi
 if [[ "${validate}" != "0" ]]; then
     cmake_command="${cmake_command} -DVALIDATE_GPU=ON";
 fi
