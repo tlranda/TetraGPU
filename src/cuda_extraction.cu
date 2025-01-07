@@ -33,7 +33,11 @@ void make_VE_for_GPU(vtkIdType ** device_vertices,
                      ) {
     // Size determinations
     size_t vertices_size = sizeof(vtkIdType) * n_edges * nbVertsInEdge,
-           // Can technically be half-sized, but duplicate for now
+           // Can technically be half-sized, but duplicate for now so index in
+           // vertices directly maps to edgeID without further manip (revisit
+           // later as minor optimization -- would just drop multiplier of
+           // nbVertsInEdge and adjust EVERY kernel making use of the edges
+           // array to left-shift its index one bit (divide by two))
            edges_size = sizeof(vtkIdType) * n_edges * nbVertsInEdge,
            index_vertex_size = sizeof(vtkIdType) * n_verts;
     // Allocations
@@ -444,6 +448,7 @@ __device__ __inline__ void te_combine(vtkIdType quad0, vtkIdType quad1,
     __syncthreads();
 }
 
+#define TE_CELLS_PER_BLOCK 195
 __global__ void TE_kernel(const vtkIdType * __restrict__ tv,
                           const vtkIdType * __restrict__ vertices,
                           const vtkIdType * __restrict__ edges,
@@ -464,7 +469,8 @@ __global__ void TE_kernel(const vtkIdType * __restrict__ tv,
               warpID = (threadIdx.x % 32),
               laneID = warpID % 6,
               laneDepth = 3*(((tid / 32)*5) + (warpID / 6)),
-              shLaneDepth = laneDepth % 480,
+              /* shLaneDepth MUST ALWAYS BE MODULO THE CELLS_PER_BLOCK VALUE */
+              shLaneDepth = laneDepth % TE_CELLS_PER_BLOCK,
               edge = (tid % nbEdgesInCell);
     // Early-exit threads reading beyond #cells at base index AND 2 straggler threads per warp
     if (laneDepth >= n_cells || warpID > 29) return;
@@ -577,8 +583,12 @@ std::unique_ptr<TE_Data> make_TE_GPU(const TV_Data & TV,
                        The above isn't working on this hardware, idk let's cut
                        it in half. 416 threads -> 13 full warps AKA 65 groups
                        unrolling to 195 cells in a block
+
+                       The value ALSO needs to be set within the kernel, so
+                       update the TE_CELLS_PER_BLOCK preprocessor definition
+                       above the TE_kernel() function if you need to change it
                     */
-                    cells_per_block = 195,
+                    cells_per_block = TE_CELLS_PER_BLOCK,
                     SHARED_PER_BLOCK = cells_per_block * 6 * sizeof(vtkIdType);
     vtkIdType N_BLOCKS = (n_cells+cells_per_block-1)/cells_per_block;
 
@@ -618,8 +628,9 @@ std::unique_ptr<TE_Data> make_TE_GPU(const TV_Data & TV,
     // Reconfigure for host
     for (vtkIdType c = 0; c < n_cells; ++c) {
         TE->emplace_back(std::array<vtkIdType,nbEdgesInCell>{
-                te_host[(4*c)  ], te_host[(4*c)+1],
-                te_host[(4*c)+2], te_host[(4*c)+3]
+                te_host[(6*c)  ], te_host[(6*c)+1],
+                te_host[(6*c)+2], te_host[(6*c)+3],
+                te_host[(6*c)+4], te_host[(6*c)+5]
                 });
     }
     kernel.tick();

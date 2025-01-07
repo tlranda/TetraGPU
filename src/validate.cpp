@@ -180,22 +180,47 @@ bool check_host_vs_device_TE(const TE_Data & host, const TE_Data & device) {
         idx++;
         auto index = std::find(begin(device), end(device), EdgeArray);
         if (index == std::end(device)) {
-            n_failures++;
-            if (n_failures <= n_failures_to_print) {
-                std::cerr << WARN_EMOJI << "Could not find set of edges ("
-                    << EdgeArray[0] << ", " << EdgeArray[1] << ", "
-                    << EdgeArray[2] << ", " << EdgeArray[3] << ") in device TE!"
-                    << std::endl;
-                std::cerr << WARN_EMOJI << "Expected match at index " << idx-1
-                    << " between host (" << EdgeArray[0] << ", "
-                    << EdgeArray[1] << ", " << EdgeArray[2] << ","
-                    << EdgeArray[3] << ") and device (" << device[idx-1][0]
-                    << ", " << device[idx-1][1] << ", " << device[idx-1][2]
-                    << ", " << device[idx-1][3] << ")" << std::endl;
-                n_printed++;
+            // Check for re-order at expected idx
+            vtkIdType scan_found = 0;
+            for (const vtkIdType look_for : EdgeArray) {
+                for (vtkIdType i = 0; i < nbEdgesInCell; i++) {
+                    if (device[idx-1][i] == look_for) {
+                        scan_found++;
+                        break;
+                    }
+                }
             }
-            if (n_failures_before_early_exit > 0 &&
-                    n_failures >= n_failures_before_early_exit) return false;
+            if (scan_found == nbEdgesInCell) {
+                n_found++;
+                if (n_printed < 10) {
+                    std::cout << OK_EMOJI << "Matched edge set between host and device ("
+                        << EdgeArray[0] << ", " << EdgeArray[1] << ", "
+                        << EdgeArray[2] << ", " << EdgeArray[3] << ")"
+                        << std::endl;
+                    n_printed++;
+                }
+            }
+            else {
+                n_failures++;
+                if (n_failures <= n_failures_to_print) {
+                    std::cerr << WARN_EMOJI << "Could not find set of edges ("
+                        << EdgeArray[0] << ", " << EdgeArray[1] << ", "
+                        << EdgeArray[2] << ", " << EdgeArray[3] << ", "
+                        << EdgeArray[4] << ", " << EdgeArray[5] << ") in device TE!"
+                        << std::endl;
+                    std::cerr << WARN_EMOJI << "Expected match at index " << idx-1
+                        << " between host (" << EdgeArray[0] << ", "
+                        << EdgeArray[1] << ", " << EdgeArray[2] << ", "
+                        << EdgeArray[3] << ", " << EdgeArray[4] << ", "
+                        << EdgeArray[5] << ") and device (" << device[idx-1][0]
+                        << ", " << device[idx-1][1] << ", " << device[idx-1][2]
+                        << ", " << device[idx-1][3] << ", " << device[idx-1][4]
+                        << ", " << device[idx-1][5] << ")" << std::endl;
+                    n_printed++;
+                }
+                if (n_failures_before_early_exit > 0 &&
+                        n_failures >= n_failures_before_early_exit) return false;
+            }
         }
         else {
             n_found++;
