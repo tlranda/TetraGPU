@@ -700,3 +700,85 @@ std::unique_ptr<TE_Data> make_TE_GPU(const TV_Data & TV,
     return TE;
 }
 
+__global__ void FV_kernel(const vtkIdType * __restrict__ vertices,
+                          const vtkIdType * __restrict__ faces,
+                          const vtkIdType n_faces,
+                          vtkIdType * __restrict__ fv) {
+    vtkIdType tid = (blockDim.x * blockIdx.x) + threadIdx.x,
+              vert_idx = (tid % 3);
+    if (tid >= (n_edges * nbVertsInFace)) return;
+    fv[(faces[tid] * nbVertsInFace) + vert_idx] = vertices[tid];
+}
+
+std::unique_ptr<FE_Data> make_FE_GPU(const VF_Data & VF,
+                                     const vtkIdType n_points,
+                                     const vtkIdType n_faces,
+                                     const arguments args) {
+    // FV_data = std::vector<FaceData{middleVert,highVert,id}>
+    std::unique_ptr<FV_Data> vertexList = std::make_unique<FV_Data>();
+    vertexList->reserve(n_faces);
+
+    // Marshall data to GPU
+    vtkIdType * vertices_device = nullptr,
+              * faces_device = nullptr,
+              * index_device = nullptr;
+    make_VF_for_GPU(&vertices_device,
+                    &faces_device,
+                    &index_device,
+                    VF,
+                    n_points,
+                    n_faces
+                    );
+    // Free index device as FV does not need it
+    if (index_device != nullptr) CUDA_WARN(cudaFree(index_device));
+    // Compute the relationship
+    size_t fv_size = sizeof(vtkIdType) * n_faces * nbVertsInFace;
+    vtkIdType * fv_computed = nullptr,
+              * fv_host = nullptr;
+    CUDA_ASSERT(cudaMalloc((void**)&fv_computed, fv_size));
+    CUDA_ASSERT(cudaMalloc((void**)&fv_host, fv_size));
+    vtkIdType n_to_compute = n_faces * nbVertsInFace;
+    dim3 thread_block_size = 1024,
+         grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
+    std::cout << INFO_EMOJI << "Kernel launch configuration is " << grid_size.x
+              << " grid blocks with " << thread_block_size.x
+              << " threads per block" << std::endl;
+    std::cout << INFO_EMOJI << "The mesh has " << n_points << " points and "
+              << n_faces << " faces" << std::endl;
+    std::cout << INFO_EMOJI << "Tids >= " << n_faces * nbVertsInFace
+              << " should auto-exit ("
+              << (thread_block_size.x * grid_size.x) - n_to_compute << ")"
+              << std::endl;
+    Timer kernel;
+    KERNEL_WARN(FV_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
+                            thread_block_size>>>(vertices_device,
+                                faces_device,
+                                n_faces,
+                                fv_computed));
+    CUDA_WARN(cudaDeviceSynchronize());
+    kernel.tick();
+    kernel.label_prev_interval("GPU kernel duration");
+    // Copy back to host and set in vertexList
+    kernel.tick();
+    CUDA_WARN(cudaMemcpy(fv_host, fv_computed, fv_size, cudaMemcpyDeviceToHost));
+    kernel.tick();
+    kernel.label_prev_interval("GPU Device->Host transfer");
+    kernel.tick();
+    // Reconfigure for host comparison
+    #pragma omp parallel for num_threads(args.threadNumber)
+    for (vtkIdType f = 0; f < n_faces; ++f) {
+        vertexList->emplace_back(FaceData(fv_host[(3*f)], fv_host[(3*f)+1],
+                                          fv_host[(3*f)+2]));
+    }
+    kernel.tick();
+    kernel.label_prev_interval("GPU Device->Host translation");
+    // Free device memory
+    if (vertices_device != nullptr) CUDA_WARN(cudaFree(vertices_device));
+    if (faces_device != nullptr) CUDA_WARN(cudaFree(faces_device));
+    if (fv_computed != nullptr) CUDA_WARN(cudaFree(fv_computed));
+    // Free host memory
+    if (fv_host != nullptr) CUDA_WARN(cudaFreeHost(fv_host));
+
+    return vertexList;
+}
+

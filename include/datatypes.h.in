@@ -36,7 +36,7 @@ struct EdgeData {
 struct FaceData {
     vtkIdType middleVert = 0, // face's second vertex id
               highVert = 0,   // faces highest vertex id
-              id = 0;         // face's id
+              id = 0;         // face's id, or when representing FV the lowest vertex id
     FaceData(vtkIdType mv, vtkIdType hv, vtkIdType i) : middleVert{mv},
                                                         highVert{hv}, id{i} {}
 };

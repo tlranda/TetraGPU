@@ -276,3 +276,55 @@ bool check_host_vs_device_TE(const TE_Data & host, const TE_Data & device) {
     return n_failures == 0;
 }
 
+bool check_host_vs_device_FV(const FV_Data & host_FV,
+                             const FV_Data & device_FV) {
+    // Validate that host and device agree on FV Data
+    // Notably, the 'id' field of FV should be the lowest vertex ID from host;
+    // the device just needs to have all 3 correct vertices in some order
+    if (host_FV.size() != device_FV.size()) {
+        std::cerr << EXCLAIM_EMOJI << "Device FV size (" << device_FV.size()
+                  << ") != Host FV size (" << host_FV.size()
+                  << ")" << std::endl;
+        return false;
+    }
+    unsigned int idx = 0,
+                 n_printed = 0,
+                 n_found = 0,
+                 n_failures = 0,
+                 n_failures_before_early_exit = MAX_ERRORS,
+                 n_failures_to_print = MAX_TO_PRINT;
+    for (const auto face : host_FV) {
+        if (idx % 1000 == 0)
+            std::cerr << INFO_EMOJI << "Process edge " << idx << " ("
+                      << n_failures << " failures so far "
+                      << 100 * n_failures / static_cast<float>(idx)
+                      << " %)" << std::endl;
+        idx++;
+        auto index = std::find(begin(device_FV), end(device_FV), face);
+        if (index == std::end(device_FV)) {
+            // Look for reordering
+            n_failures++;
+            if (n_failures <= n_failures_to_print)
+                std::cerr << WARN_EMOJI << "Could not find face (" << face.id
+                          << ", " << face.middleVert << ", " << face.highVert
+                          << ") in device FV!" << std::endl;
+            if (n_failure_before_early_exit > 0 &&
+                n_failures >= n_failures_before_early_exit) return false;
+        }
+        else {
+            n_found++;
+            if (n_printed < 10) {
+                std::cout << OK_EMOJI << "Matched face between host and device ("
+                          << face.id << ", " << face.middleVert << ", "
+                          << face.highVert << ")" << std::endl;
+                n_printed++;
+            }
+        }
+    }
+    std::cerr << INFO_EMOJI << "Matched " << n_found << " faces" << std::endl;
+    if (n_failures_before_early_exit == 0 && n_failures > 0)
+        std::cerr << EXCLAIM_EMOJI << "Failed to match " << n_failures
+                  << " faces" << std::endl;
+    return n_failures == 0;
+}
+

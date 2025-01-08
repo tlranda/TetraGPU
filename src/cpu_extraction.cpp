@@ -215,3 +215,18 @@ vtkIdType make_VF(const TV_Data & tv_relationship,
     return faceCount;
 }
 
+// FV = VF'
+std::unqiue_ptr<FV_Data> elective_make_FV(const VF_Data & VF,
+                                          const vtkIdType n_faces,
+                                          const arguments args) {
+    std::unique_ptr<FV_Data> vertexList = std::make_unqiue<FV_Data>(n_faces);
+    #pragma omp parallel for num_threads(args.threadNumber)
+    // This is probably not right but follows similar format for EV
+    for (vtkIdType i = 0; i < n_faces; i++) {
+        for (const auto &data : VF[i]) {
+            (*vertexList)[data.id] = {i, data.middleVert, data.highVert};
+        }
+    }
+    return vertexList;
+}
+

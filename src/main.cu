@@ -232,9 +232,14 @@ int main(int argc, char *argv[]) {
 
     // OPTIONAL: FV (green) [VF']
     if (args.build_FV()) {
+        std::cout << PUSHPIN_EMOJI << "Using CPU to compute FV" << std::endl;
+        timer.label_next_interval("FV [CPU]");
+        timer.tick();
+        std::unqiue_ptr<FV_Data> FV = elective_make_FV(*VF, TV->nPoints,
+                                                       faceCount, args);
+        timer.tick();
         std::cout << PUSHPIN_EMOJI << "Using GPU to compute FV" << std::endl;
-        std::cerr << EXCLAIM_EMOJI << "Not implemented yet" << std::endl;
-        /*
+        std::cerr << EXCLAIM_EMOJI << "Not validated yet" << std::endl;
         timer.label_next_interval("FV [GPU]");
         timer.tick();
         std::unique_ptr<FV_Data> device_FV = make_FV_GPU(*VF, TV->nPoints,
@@ -256,7 +261,6 @@ int main(int argc, char *argv[]) {
             timer.tick_announce();
         }
         #endif
-        */
     }
 
     // OPTIONAL: FE (green) [VF' x VE]

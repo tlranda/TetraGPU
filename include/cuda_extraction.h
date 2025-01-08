@@ -93,6 +93,10 @@ __global__ void TE_kernel(const vtkIdType * __restrict__ tv,
                           const vtkIdType n_edges,
                           const vtkIdType n_points,
                           vtkIdType * __restrict__ te);
+__global__ void FV_kernel(const vtkIdType * __restrict__ vertices,
+                          const vtkIdType * __restrict__ faces,
+                          const vtkIdType n_faces,
+                          vtkIdType * __restrict__ fv);
 
 #endif
 
