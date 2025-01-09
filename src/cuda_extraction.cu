@@ -782,3 +782,101 @@ std::unique_ptr<FV_Data> make_FV_GPU(const VF_Data & VF,
     return vertexList;
 }
 
+std::unique_ptr<FE_Data> make_FE_GPU(const VF_Data & VF,
+                                     const VE_Data & VE,
+                                     const vtkIdType n_points,
+                                     const vtkIdType n_edges,
+                                     const vtkIdType n_faces,
+                                     const arguments args) {
+    std::unique_ptr<FE_Data> faceToEdges = std::make_unique<FE_Data>();
+    faceToEdges->reserve(n_faces);
+
+    // Marshall data to GPU
+    vtkIdType * edges_vertices_device = nullptr,
+              * edges_device = nullptr,
+              * edges_index_device = nullptr,
+              * faces_vertices_device = nullptr,
+              * faces_device = nullptr,
+              * faces_index_device = nullptr;
+    make_VE_for_GPU(&edges_vertices_device,
+                    &edges_device,
+                    &edges_index_device,
+                    VE,
+                    n_points,
+                    n_edges
+            );
+    make_VF_for_GPU(&faces_vertices_device,
+                    &faces_device,
+                    &faces_index_device,
+                    VF,
+                    n_points,
+                    n_faces
+            );
+    // If the {edges,faces}_vertices_device are identical here, we should
+    // go ahead and free one of them; could do minor optimization to not
+    // create it a second time in VE or VF via a flag to the function
+
+    // Compute the relationship
+    size_t fe_size = sizeof(vtkIdType) * n_faces * nbEdgesInFace;
+    vtkIdType * fe_computed = nullptr,
+              * fe_host = nullptr;
+    CUDA_ASSERT(cudaMalloc((void**)&fe_computed, fe_size));
+    CUDA_ASSERT(cudaMallocHost((void**)&fe_host, fe_size));
+    vtkIdType n_to_compute = n_faces * nbEdgesInFace;
+    dim3 thread_block_size = 1024,
+         grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
+    std::cout << INFO_EMOJI << "Kernel launch configuration is " << grid_size.x
+              << " grid blocks with " << thread_block_size.x << " threads per block"
+              << std::endl;
+    std::cout << INFO_EMOJI << "The mesh has " << n_faces << " faces and "
+              << n_edges << " edges" << std::endl;
+    Timer kernel;
+    /*
+    KERNEL_WARN(FE_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
+                            thread_block_size>>>(edges_vertices_device,
+                                edges_device,
+                                edges_index_device,
+                                faces_vertices_device,
+                                faces_device,
+                                faces_index_device,
+                                n_edges,
+                                n_faces,
+                                fe_compute));
+    */
+    CUDA_WARN(cudaDeviceSynchronize());
+    kernel.tick();
+    kernel.label_prev_interval("GPU kernel duration");
+    // Copy back to host and set for validation
+    kernel.tick();
+    CUDA_WARN(cudaMemcpy(fe_host, fe_computed, fe_size, cudaMemcpyDeviceToHost));
+    kernel.tick();
+    kernel.label_prev_interval("GPU Device->Host transfer");
+
+    // Reconfigure
+    kernel.tick();
+    kernel.tick();
+    kernel.label_prev_interval("GPU Device->Host translation");
+
+    // Free device memory
+    if (edges_vertices_device != nullptr) CUDA_WARN(cudaFree(edges_vertices_device));
+    if (edges_device != nullptr) CUDA_WARN(cudaFree(edges_device));
+    if (edges_index_device != nullptr) CUDA_WARN(cudaFree(edges_index_device));
+    if (faces_vertices_device != nullptr) CUDA_WARN(cudaFree(faces_vertices_device));
+    if (faces_device != nullptr) CUDA_WARN(cudaFree(faces_device));
+    if (faces_index_device != nullptr) CUDA_WARN(cudaFree(faces_index_device));
+    if (fe_computed != nullptr) CUDA_WARN(cudaFree(fe_computed));
+    if (fe_host != nullptr) CUDA_WARN(cudaFreeHost(fe_host));
+
+    return faceToEdges;
+}
+
+std::unique_ptr<ET_Data> make_ET_GPU(const TV_Data & TV,
+                                     const VE_Data & VE,
+                                     const vtkIdType n_points,
+                                     const vtkIdType n_edges,
+                                     const arguments args) {
+    std::unique_ptr<ET_Data> edgeToCell = std::make_unique<ET_Data>();
+    edgeToCell->reserve(n_edges);
+    return edgeToCell;
+}
+

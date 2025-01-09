@@ -237,3 +237,15 @@ std::unique_ptr<FV_Data> elective_make_FV(const VF_Data & VF,
     return vertexList;
 }
 
+std::unique_ptr<FE_Data> elective_make_FE(const VF_Data & VF,
+                                          const VE_Data & VE,
+                                          const vtkIdType n_points,
+                                          const vtkIdType n_edges,
+                                          const vtkIdType n_faces,
+                                          const arguments args) {
+    std::unique_ptr<FE_Data> edgeList = std::make_unique<FE_Data>(n_faces);
+    // Implementation needed
+    std::cerr << "NOT IMPLEMENTED YET!" << std::endl;
+    return edgeList;
+}
+

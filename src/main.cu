@@ -153,10 +153,10 @@ int main(int argc, char *argv[]) {
             // GPU
             std::cout << PUSHPIN_EMOJI << "Using GPU to compute ET" << std::endl;
             std::cerr << EXCLAIM_EMOJI << "Not implemented yet" << std::endl;
-            /*
             timer.label_next_interval("ET [GPU]");
             timer.tick();
-            std::unique_ptr<ET_Data> device_ET = make_ET_GPU(*TE, args);
+            std::unique_ptr<ET_Data> device_ET = make_ET_GPU(*TV, *VE, TV->nPoints,
+                                                             edgeCount, args);
             timer.tick_announce();
 
             #ifdef VALIDATE_GPU
@@ -176,7 +176,6 @@ int main(int argc, char *argv[]) {
                 timer.tick_announce();
             }
             #endif
-            */
         }
     }
 
@@ -263,13 +262,20 @@ int main(int argc, char *argv[]) {
 
     // OPTIONAL: FE (green) [VF' x VE]
     if (args.build_FE()) {
+        std::cout << PUSHPIN_EMOJI << "Using CPU to compute FE" << std::endl;
+        timer.label_next_interval("FE [CPU]");
+        timer.tick();
+        std::unique_ptr<FE_Data> FE = elective_make_FE(*VF, *VE, TV->nPoints,
+                                                       edgeCount, faceCount,
+                                                       args);
+        timer.tick_announce();
         std::cout << PUSHPIN_EMOJI << "Using GPU to compute FE" << std::endl;
         std::cerr << EXCLAIM_EMOJI << "Not implemented yet" << std::endl;
-        /*
         timer.label_next_interval("FE [GPU]");
         timer.tick();
         std::unique_ptr<FE_Data> device_FE = make_FE_GPU(*VF, *VE, TV->nPoints,
-                                                         faceCount, args);
+                                                         edgeCount, faceCount,
+                                                         args);
         timer.tick_announce();
         #ifdef VALIDATE_GPU
         if (args.validate()) {
@@ -287,7 +293,6 @@ int main(int argc, char *argv[]) {
             timer.tick_announce();
         }
         #endif
-        */
     }
 
     // MIA: TT (yellow) [TV x TV']

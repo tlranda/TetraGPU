@@ -19,19 +19,26 @@
  * Face: FaceData (arbitrarily enumerated by increasing vertex IDs, with face ID)
      * TF relationship: TF_Data (map cell ID to its 4 face IDs)
      * VF relationship: VF_Data (map low vertex ID to face data including other vertices)
+ * Adjacency: Vector of vectors of IDs
+     * VV relationship: VV_Data
+     * EE relationship: EE_Data
+     * FF relationship: FF_Data
+     * TT relationship: TT_Data
  */
 
 // Tetrahedron geometry constants
 const int nbVertsInCell = 4; // verifiable at VTK load via VTK offsets[1]-offsets[0]
-const int nbEdgesInCell = 6;
-const int nbFacesInCell = 4;
-const int nbVertsInEdge = 2;
 const int nbVertsInFace = 3;
+const int nbVertsInEdge = 2;
+const int nbEdgesInCell = 6;
+const int nbEdgesInFace = 3;
+const int nbFacesInCell = 4;
 
 struct EdgeData {
     vtkIdType highVert = 0, // edge's higher vertex id
               id = 0;       // edge's id
     EdgeData(vtkIdType hv, vtkIdType i) : highVert{hv}, id{i} {}
+    EdgeData() : highVert{0}, id{0} {}
 };
 struct FaceData {
     vtkIdType middleVert = 0, // face's second vertex id
@@ -83,8 +90,17 @@ typedef std::vector<std::vector<FaceData>> VF_Data;
 // Elective precomputes
 typedef std::vector<std::array<vtkIdType,nbVertsInEdge>> EV_Data;
 typedef std::vector<std::vector<vtkIdType>> ET_Data;
-typedef std::vector<FaceData> FV_Data; // DUMMY
-typedef std::vector<FaceData> FE_Data; // DUMMY
+typedef std::vector<FaceData> FV_Data;
+typedef std::vector<std::array<EdgeData,nbEdgesInFace>> FE_Data;
+typedef std::vector<std::array<vtkIdType,2>> FT_Data;
+typedef std::vector<std::vector<vtkIdType>> EF_Data;
+typedef std::vector<std::vector<vtkIdType>> VT_Data;
+
+// Adjacency
+typedef std::vector<std::vector<vtkIdType>> VV_Data;
+typedef std::vector<std::vector<vtkIdType>> EE_Data;
+typedef std::vector<std::vector<vtkIdType>> FF_Data;
+typedef std::vector<std::vector<vtkIdType>> TT_Data;
 
 // Argument values to be stored here, with defaults if they are optional
 typedef struct argstruct {
@@ -92,7 +108,7 @@ typedef struct argstruct {
     int threadNumber = 1;
     // Endian-ness may mean defaults need to be set in LSB->MSB order
     // TE starts on 3rd LSB
-    std::bitset<7> arg_flags{"01000001"};
+    std::bitset<13> arg_flags{"00000001000001"};
     std::map<int,std::string> flag_names = {
         {0, "validate"},
         {1, "TE"},
@@ -100,14 +116,17 @@ typedef struct argstruct {
         {3, "ET"},
         {4, "TF"},
         {5, "FV"},
-        {6, "FE"}
-        //{7, "FT"},
-        //{8, "EF"},
-        //{9, "VT"},
-        //{10, "TT"},
-        //{11, "FF"},
-        //{12, "EE"},
-        //{13, "VV"}
+        {6, "FE"},
+        {7, "FT"},
+        {8, "EF"},
+        {9, "VT"},
+        {10, "TT"},
+        {11, "FF"},
+        {12, "EE"},
+        {13, "VV"}
+        /*
+         * Always initialized, ergo not pickable: TV, VF, VE
+         */
     };
     bool validate(void) const { return arg_flags[0]; }
     bool build_TE(void) const { return arg_flags[1]; }
@@ -116,7 +135,6 @@ typedef struct argstruct {
     bool build_TF(void) const { return arg_flags[4]; }
     bool build_FV(void) const { return arg_flags[5]; }
     bool build_FE(void) const { return arg_flags[6]; }
-    /* MIA
     bool build_FT(void) const { return arg_flags[7]; }
     bool build_EF(void) const { return arg_flags[8]; }
     bool build_VT(void) const { return arg_flags[9]; }
@@ -124,7 +142,6 @@ typedef struct argstruct {
     bool build_FF(void) const { return arg_flags[11]; }
     bool build_EE(void) const { return arg_flags[12]; }
     bool build_VV(void) const { return arg_flags[13]; }
-     */
 } arguments;
 typedef std::map<const char*, std::string> option_map;
 

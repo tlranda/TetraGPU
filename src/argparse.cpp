@@ -56,7 +56,7 @@ void parse(int argc, char *argv[], arguments& args) {
      * If valid, set values in the provided struct appropriately
      */
     int c, bad_args = 0;
-    int arg_flags[7] = {0};
+    int arg_flags[14] = {0};
     // Disable getopt's automatic error messages so we can catch it via '?'
     opterr = 0;
     // Getopt option declarations
@@ -74,6 +74,13 @@ void parse(int argc, char *argv[], arguments& args) {
         {"build_TF", no_argument, &arg_flags[4], 1},
         {"build_FV", no_argument, &arg_flags[5], 1},
         {"build_FE", no_argument, &arg_flags[6], 1},
+        {"build_FT", no_argument, &arg_flags[7], 1},
+        {"build_EF", no_argument, &arg_flags[8], 1},
+        {"build_VT", no_argument, &arg_flags[9], 1},
+        {"build_TT", no_argument, &arg_flags[10], 1},
+        {"build_FF", no_argument, &arg_flags[11], 1},
+        {"build_EE", no_argument, &arg_flags[12], 1},
+        {"build_VV", no_argument, &arg_flags[13], 1},
         {0,0,0,0}
     };
     const option_map help_info = {
@@ -89,6 +96,13 @@ void parse(int argc, char *argv[], arguments& args) {
         {"build_TF", "Build the TF relationship"},
         {"build_FV", "Build the FV relationship"},
         {"build_FE", "Build the FE relationship"},
+        {"build_FT", "Build the FT relationship"},
+        {"build_EF", "Build the EF relationship"},
+        {"build_VT", "Build the VT relationship"},
+        {"build_TT", "Build the TT relationship"},
+        {"build_FF", "Build the FF relationship"},
+        {"build_EE", "Build the EE relationship"},
+        {"build_VV", "Build the VV relationship"},
     };
     const option_map metavars = {
         {"input", "input.vtu"},

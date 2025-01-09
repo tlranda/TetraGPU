@@ -22,6 +22,12 @@ std::unique_ptr<ET_Data> elective_make_ET(const TE_Data & cellEdgeList,
 std::unique_ptr<FV_Data> elective_make_FV(const VF_Data & VF,
                                           const vtkIdType n_faces,
                                           const arguments args);
+std::unique_ptr<FE_Data> elective_make_FE(const VF_Data & VF,
+                                          const VE_Data & VE,
+                                          const vtkIdType n_points,
+                                          const vtkIdType n_edges,
+                                          const vtkIdType n_faces,
+                                          const arguments args);
 vtkIdType make_TF_and_VF(const TV_Data & tv_relationship,
                          TF_Data & cellFaceList,
                          VF_Data & faceTable);

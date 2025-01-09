@@ -40,11 +40,11 @@ std::unique_ptr<TE_Data> make_TE_GPU(const TV_Data & TV,
 std::unique_ptr<ET_Data> make_ET_GPU(const TE_Data & TE,
                                      const arguments args);
 // Possible alternative: ET = (TV x VE)'
-// std::unique_ptr<ET_Data> make_ET_GPU(const TV_Data & TV,
-//                                      const VE_Data & VE,
-//                                      const vtkIdType n_points,
-//                                      const vtkIdType n_edges,
-//                                      const arguments args);
+ std::unique_ptr<ET_Data> make_ET_GPU(const TV_Data & TV,
+                                      const VE_Data & VE,
+                                      const vtkIdType n_points,
+                                      const vtkIdType n_edges,
+                                      const arguments args);
 // TF = TV x VF
 std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
                                      const VF_Data & VF,
@@ -58,9 +58,10 @@ std::unique_ptr<FV_Data> make_FV_GPU(const VF_Data & VF,
                                      const vtkIdType n_faces,
                                      const arguments args);
 // FE = VF' x VE
-std::unique_ptr<FV_Data> make_FV_GPU(const VF_Data & VF,
+std::unique_ptr<FE_Data> make_FE_GPU(const VF_Data & VF,
                                      const VE_Data & VE,
                                      const vtkIdType n_points,
+                                     const vtkIdType n_edges,
                                      const vtkIdType n_faces,
                                      const arguments args);
 
