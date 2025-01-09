@@ -276,8 +276,8 @@ bool check_host_vs_device_TE(const TE_Data & host, const TE_Data & device) {
     return n_failures == 0;
 }
 
-bool check_host_vs_device_FV(const FV_Data & host_FV,
-                             const FV_Data & device_FV) {
+bool check_host_vs_device_FV(FV_Data & host_FV,
+                             FV_Data & device_FV) {
     // Validate that host and device agree on FV Data
     // Notably, the 'id' field of FV should be the lowest vertex ID from host;
     // the device just needs to have all 3 correct vertices in some order
@@ -287,6 +287,34 @@ bool check_host_vs_device_FV(const FV_Data & host_FV,
                   << ")" << std::endl;
         return false;
     }
+    /* Sorting should carry minimal cost here as there are only 3 elements
+     * to compare
+     */
+    for (FaceData& face : host_FV) {
+        vtkIdType i = face.id,
+                  j = face.middleVert,
+                  k = face.highVert;
+        // Enfoce i < j < k
+        if (i > j) std::swap(i,j);
+        if (j > k) std::swap(j,k);
+        // Assign in order
+        face.id = i;
+        face.middleVert = j;
+        face.highVert = k;
+    }
+    for (FaceData& face : device_FV) {
+        vtkIdType i = face.id,
+                  j = face.middleVert,
+                  k = face.highVert;
+        // Enfoce i < j < k
+        if (i > j) std::swap(i,j);
+        if (j > k) std::swap(j,k);
+        // Assign in order
+        face.id = i;
+        face.middleVert = j;
+        face.highVert = k;
+    }
+
     unsigned int idx = 0,
                  n_printed = 0,
                  n_found = 0,
@@ -302,13 +330,12 @@ bool check_host_vs_device_FV(const FV_Data & host_FV,
         idx++;
         auto index = std::find(begin(device_FV), end(device_FV), face);
         if (index == std::end(device_FV)) {
-            // Look for reordering
             n_failures++;
             if (n_failures <= n_failures_to_print)
                 std::cerr << WARN_EMOJI << "Could not find face (" << face.id
                           << ", " << face.middleVert << ", " << face.highVert
                           << ") in device FV!" << std::endl;
-            if (n_failure_before_early_exit > 0 &&
+            if (n_failures_before_early_exit > 0 &&
                 n_failures >= n_failures_before_early_exit) return false;
         }
         else {

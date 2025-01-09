@@ -706,11 +706,11 @@ __global__ void FV_kernel(const vtkIdType * __restrict__ vertices,
                           vtkIdType * __restrict__ fv) {
     vtkIdType tid = (blockDim.x * blockIdx.x) + threadIdx.x,
               vert_idx = (tid % 3);
-    if (tid >= (n_edges * nbVertsInFace)) return;
+    if (tid >= (n_faces * nbVertsInFace)) return;
     fv[(faces[tid] * nbVertsInFace) + vert_idx] = vertices[tid];
 }
 
-std::unique_ptr<FE_Data> make_FE_GPU(const VF_Data & VF,
+std::unique_ptr<FV_Data> make_FV_GPU(const VF_Data & VF,
                                      const vtkIdType n_points,
                                      const vtkIdType n_faces,
                                      const arguments args) {
@@ -736,7 +736,7 @@ std::unique_ptr<FE_Data> make_FE_GPU(const VF_Data & VF,
     vtkIdType * fv_computed = nullptr,
               * fv_host = nullptr;
     CUDA_ASSERT(cudaMalloc((void**)&fv_computed, fv_size));
-    CUDA_ASSERT(cudaMalloc((void**)&fv_host, fv_size));
+    CUDA_ASSERT(cudaMallocHost((void**)&fv_host, fv_size));
     vtkIdType n_to_compute = n_faces * nbVertsInFace;
     dim3 thread_block_size = 1024,
          grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
@@ -765,7 +765,7 @@ std::unique_ptr<FE_Data> make_FE_GPU(const VF_Data & VF,
     kernel.label_prev_interval("GPU Device->Host transfer");
     kernel.tick();
     // Reconfigure for host comparison
-    #pragma omp parallel for num_threads(args.threadNumber)
+    //#pragma omp parallel for num_threads(args.threadNumber)
     for (vtkIdType f = 0; f < n_faces; ++f) {
         vertexList->emplace_back(FaceData(fv_host[(3*f)], fv_host[(3*f)+1],
                                           fv_host[(3*f)+2]));

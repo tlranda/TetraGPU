@@ -39,6 +39,12 @@ struct FaceData {
               id = 0;         // face's id, or when representing FV the lowest vertex id
     FaceData(vtkIdType mv, vtkIdType hv, vtkIdType i) : middleVert{mv},
                                                         highVert{hv}, id{i} {}
+    FaceData() : middleVert{0}, highVert{0}, id{0} {}
+    bool operator==(const FaceData& rhs) {
+        return (this->id == rhs.id &&
+                this->middleVert == rhs.middleVert &&
+                this->highVert == rhs.highVert);
+    }
 };
 struct TV_Data {
     vtkIdType nPoints, nCells;
@@ -86,7 +92,7 @@ typedef struct argstruct {
     int threadNumber = 1;
     // Endian-ness may mean defaults need to be set in LSB->MSB order
     // TE starts on 3rd LSB
-    std::bitset<7> arg_flags{"00000101"};
+    std::bitset<7> arg_flags{"01000001"};
     std::map<int,std::string> flag_names = {
         {0, "validate"},
         {1, "TE"},
