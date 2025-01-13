@@ -233,12 +233,12 @@ int main(int argc, char *argv[]) {
     // OPTIONAL: FV (green) [VF']
     if (args.build_FV()) {
         std::cout << PUSHPIN_EMOJI << "Using CPU to compute " GREEN_COLOR "FV" RESET_COLOR << std::endl;
-        timer.label_next_interval(GREEN_COLOR "FV" RESET_COLOR "[CPU]");
+        timer.label_next_interval(GREEN_COLOR "FV" RESET_COLOR " [CPU]");
         timer.tick();
         std::unique_ptr<FV_Data> FV = elective_make_FV(*VF, faceCount, args);
         timer.tick_announce();
         std::cout << PUSHPIN_EMOJI << "Using GPU to compute " GREEN_COLOR "FV" RESET_COLOR << std::endl;
-        timer.label_next_interval(GREEN_COLOR "FV" RESET_COLOR "[GPU]");
+        timer.label_next_interval(GREEN_COLOR "FV" RESET_COLOR " [GPU]");
         timer.tick();
         std::unique_ptr<FV_Data> device_FV = make_FV_GPU(*VF, TV->nPoints,
                                                          faceCount, args);
