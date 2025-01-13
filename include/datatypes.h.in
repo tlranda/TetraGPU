@@ -108,22 +108,22 @@ typedef struct argstruct {
     int threadNumber = 1;
     // Endian-ness may mean defaults need to be set in LSB->MSB order
     // TE starts on 3rd LSB
-    std::bitset<13> arg_flags{"00000001000001"};
+    std::bitset<14> arg_flags{"10000000000001"};
     std::map<int,std::string> flag_names = {
-        {0, "validate"},
-        {1, "TE"},
-        {2, "EV"},
-        {3, "ET"},
-        {4, "TF"},
-        {5, "FV"},
-        {6, "FE"},
-        {7, "FT"},
-        {8, "EF"},
-        {9, "VT"},
-        {10, "TT"},
-        {11, "FF"},
-        {12, "EE"},
-        {13, "VV"}
+        {0, "validate"}, // ^*1$
+        {1, "TE"},       // ^*1_$
+        {2, "EV"},       // ^*1[2_]$
+        {3, "ET"},       // ^*1[3_]$
+        {4, "TF"},       // ^*1[4_]$
+        {5, "FV"},       // ^*1[5_]$
+        {6, "FE"},       // ^*1[6_]$
+        {7, "FT"},       // ^*1[7_]$
+        {8, "EF"},       // ^*1[8_]$
+        {9, "VT"},       // ^*1[9_]$
+        {10, "TT"},      // ^*1[10_]$
+        {11, "FF"},      // ^*1[11_]$
+        {12, "EE"},      // ^*1[12_]$
+        {13, "VV"}       // ^1[13_]$
         /*
          * Always initialized, ergo not pickable: TV, VF, VE
          */

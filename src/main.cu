@@ -67,7 +67,7 @@ int main(int argc, char *argv[]) {
     std::unique_ptr<VE_Data> VE = std::make_unique<VE_Data>(TV->nPoints);
     timer.tick();
     vtkIdType edgeCount;
-    if (args.build_TE()) {
+    if (args.build_TE() || args.build_ET()) {
         timer.label_next_interval("TE and VE [CPU]");
         edgeCount = make_TE_and_VE(*TV, *TE, *VE);
     }
@@ -115,7 +115,8 @@ int main(int argc, char *argv[]) {
     }
 
     // OPTIONAL: TE (green) [TV x VE]
-    if (args.build_TE()) {
+    // Required for ET as well
+    if (args.build_TE() || args.build_ET()) {
         // CPU already prepared, GPU
         std::cout << PUSHPIN_EMOJI << "Using GPU to compute TE" << std::endl;
         timer.label_next_interval("TE [GPU]");
@@ -125,7 +126,7 @@ int main(int argc, char *argv[]) {
 
         #ifdef VALIDATE_GPU
         // VALIDATION
-        if (args.validate()) {
+        if (args.validate() && args.build_TE()) {
             timer.label_next_interval("Validate GPU TE");
             timer.tick();
             if (check_host_vs_device_TE(*TE, *device_TE)) {
@@ -295,13 +296,61 @@ int main(int argc, char *argv[]) {
         #endif
     }
 
-    // MIA: TT (yellow) [TV x TV']
-    // MIA: FF (yellow) [TF' x TF]
-    // MIA: EE (yellow) [EV' x VE]
-    // MIA: VV (yellow) [TV' x TV]
-    // MIA: FT (red) [(TV x VF)' | VF' x TV']
-    // MIA: EF (red) [(TV x VE)' | VE' x TV']
-    // MIA: VT (red) [TV']
+    // OPTIONAL: FT (red) [(TV x VF)' | VF' x TV']
+    if (args.build_FT()) {
+        std::cerr << EXCLAIM_EMOJI << "FT not implemented yet" << std::endl;
+    }
+    // OPTIONAL: EF (red) [(TV x VE)' | VE' x TV']
+    if (args.build_EF()) {
+        std::cerr << EXCLAIM_EMOJI << "EF not implemented yet" << std::endl;
+    }
+    // OPTIONAL: VT (red) [TV']
+    if (args.build_VT()) {
+        std::cerr << EXCLAIM_EMOJI << "VT not implemented yet" << std::endl;
+    }
+    // OPTIONAL: TT (yellow) [TV x TV']
+    if (args.build_TT()) {
+        std::cerr << EXCLAIM_EMOJI << "TT not implemented yet" << std::endl;
+    }
+    // OPTIONAL: FF (yellow) [TF' x TF]
+    if (args.build_FF()) {
+        std::cerr << EXCLAIM_EMOJI << "FF not implemented yet" << std::endl;
+    }
+    // OPTIONAL: EE (yellow) [EV' x VE]
+    if (args.build_EE()) {
+        std::cerr << EXCLAIM_EMOJI << "EE not implemented yet" << std::endl;
+    }
+    // OPTIONAL: VV (yellow) [TV' x TV]
+    if (args.build_VV()) {
+        std::cout << PUSHPIN_EMOJI << "Using CPU to compute VV" << std::endl;
+        timer.label_next_interval("VV [CPU]");
+        timer.tick();
+        std::unique_ptr<VV_Data> VV = elective_make_VV(*TV, TV->nPoints, args);
+        timer.tick_announce();
+        std::cout << PUSHPIN_EMOJI << "Using GPU to compute VV" << std::endl;
+        std::cerr << EXCLAIM_EMOJI << "Not implemented yet" << std::endl;
+        timer.label_next_interval("VV [GPU]");
+        timer.tick();
+        std::unique_ptr<VV_Data> device_VV = make_VV_GPU(*TV, TV->nCells,
+                                                         TV->nPoints, args);
+        timer.tick_announce();
+        #ifdef VALIDATE_GPU
+        if (args.validate()) {
+            timer.label_next_interval("Validate GPU VV");
+            timer.tick();
+            if (check_host_vs_device_VV(*VV, *device_VV)) {
+                std::cout << OK_EMOJI << "GPU VV results validated by CPU"
+                          << std::endl;
+            }
+            else {
+                    std::cerr << EXCLAIM_EMOJI
+                              << "ALERT! GPU VV results do NOT match CPU results!"
+                              << std::endl;
+            }
+            timer.tick_announce();
+        }
+        #endif
+    }
 
     // Critical Points: FT = TF', VV = (V*') x (*V) for any of TV, FV, EV, VF, VE
     timer.tick(); // bonus tick -- open interval

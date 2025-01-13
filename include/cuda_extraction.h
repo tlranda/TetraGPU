@@ -64,7 +64,12 @@ std::unique_ptr<FE_Data> make_FE_GPU(const VF_Data & VF,
                                      const vtkIdType n_edges,
                                      const vtkIdType n_faces,
                                      const arguments args);
-
+// VV = TV' x TV
+vtkIdType get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points);
+std::unique_ptr<VV_Data> make_VV_GPU(const TV_Data & TV,
+                                     const vtkIdType n_cells,
+                                     const vtkIdType n_points,
+                                     const arguments args);
 // GPU KERNELS
 __global__ void EV_kernel(const vtkIdType * __restrict__ vertices,
                           const vtkIdType * __restrict__ edges,
@@ -98,6 +103,12 @@ __global__ void FV_kernel(const vtkIdType * __restrict__ vertices,
                           const vtkIdType * __restrict__ faces,
                           const vtkIdType n_faces,
                           vtkIdType * __restrict__ fv);
+__global__ void VV_kernel(const vtkIdType * __restrict__ tv,
+                          const vtkIdType n_cells,
+                          const vtkIdType n_points,
+                          const vtkIdType offset,
+                          unsigned long long int * __restrict__ index,
+                          vtkIdType * __restrict__ vv);
 
 #endif
 

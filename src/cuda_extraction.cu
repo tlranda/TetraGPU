@@ -526,8 +526,7 @@ __global__ void TE_kernel(const vtkIdType * __restrict__ tv,
               laneID = warpID % 6,
               laneDepth = 3*(((tid / 32)*5) + (warpID / 6)),
               /* shLaneDepth MUST ALWAYS BE MODULO THE CELLS_PER_BLOCK VALUE */
-              shLaneDepth = laneDepth % TE_CELLS_PER_BLOCK,
-              edge = (tid % nbEdgesInCell);
+              shLaneDepth = laneDepth % TE_CELLS_PER_BLOCK;
     // Early-exit threads reading beyond #cells at base index AND 2 straggler threads per warp
     if (laneDepth >= n_cells || warpID > 29) return;
 
@@ -878,5 +877,174 @@ std::unique_ptr<ET_Data> make_ET_GPU(const TV_Data & TV,
     std::unique_ptr<ET_Data> edgeToCell = std::make_unique<ET_Data>();
     edgeToCell->reserve(n_edges);
     return edgeToCell;
+}
+
+__global__ void VV_kernel(const vtkIdType * __restrict__ tv,
+                          const vtkIdType n_cells,
+                          const vtkIdType n_points,
+                          const vtkIdType offset,
+                          unsigned long long int * __restrict__ index,
+                          vtkIdType * __restrict__ vv) {
+    vtkIdType tid = (blockDim.x * blockIdx.x) + threadIdx.x;
+    if (tid >= (n_cells * nbVertsInCell)) return;
+
+    // Mark yourself as adjacent to other cells alongside you
+    vtkIdType cell_vertex = tv[tid], v0, v1, v2, v3;
+    // Use register exchanges within a warp to get all other values
+    v0 = __shfl_sync(0xffffffff, cell_vertex, 0, 4);
+    v1 = __shfl_sync(0xffffffff, cell_vertex, 1, 4);
+    v2 = __shfl_sync(0xffffffff, cell_vertex, 2, 4);
+    v3 = __shfl_sync(0xffffffff, cell_vertex, 3, 4);
+
+    // Make sure you haven't already logged v0
+    bool logged = false;
+    if (v0 != cell_vertex) {
+        for (vtkIdType i = 0; i < index[cell_vertex]; i++) {
+            if (vv[cell_vertex*offset+i] == v0) {
+                logged = true;
+                break;
+            }
+        }
+        if (!logged) {
+            unsigned long long int new_idx = atomicAdd(&index[cell_vertex],1);
+            vv[cell_vertex*offset+new_idx] = v0;
+        }
+    }
+    // Repeat for v1
+    if (v1 != cell_vertex) {
+        logged = false;
+        for (vtkIdType i = 0; i < index[cell_vertex]; i++) {
+            if (vv[cell_vertex*offset+i] == v1) {
+                logged = true;
+                break;
+            }
+        }
+        if (!logged) {
+            unsigned long long int new_idx = atomicAdd(&index[cell_vertex],1);
+            vv[cell_vertex*offset+new_idx] = v1;
+        }
+    }
+    // Repeat for v2
+    if (v2 != cell_vertex) {
+        logged = false;
+        for (vtkIdType i = 0; i < index[cell_vertex]; i++) {
+            if (vv[cell_vertex*offset+i] == v2) {
+                logged = true;
+                break;
+            }
+        }
+        if (!logged) {
+            unsigned long long int new_idx = atomicAdd(&index[cell_vertex],1);
+            vv[cell_vertex*offset+new_idx] = v2;
+        }
+    }
+    // Repeat for v3
+    if (v3 != cell_vertex) {
+        logged = false;
+        for (vtkIdType i = 0; i < index[cell_vertex]; i++) {
+            if (vv[cell_vertex*offset+i] == v3) {
+                logged = true;
+                break;
+            }
+        }
+        if (!logged) {
+            unsigned long long int new_idx = atomicAdd(&index[cell_vertex],1);
+            vv[cell_vertex*offset+new_idx] = v3;
+        }
+    }
+}
+
+vtkIdType get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points) {
+    // This calculation does NOT need to be exact, it needs to upper-bound
+    // our memory usage. In order to do so, we count the largest number of
+    // times a vertex appears in cells. In the WORST case scenario, this
+    // vertex is the center-point of a "sphere" of cells which each have 3
+    // unique vertices forming the rest of the cell, so 3*MAX(appear) is our
+    // upper bound
+    std::vector<vtkIdType> appears(n_points, 0);
+    vtkIdType max = 0;
+    std::for_each(TV.begin(), TV.end(),
+            [&](const std::array<vtkIdType,nbVertsInCell>& cell) {
+                for (const vtkIdType vertex : cell) {
+                    // Max can never be off by more than one so just increment it
+                    if (appears[vertex]++ > max) max++;
+                }
+            });
+    max *= 3; // Connected to 3 unique vertices for each cell present in
+    std::cerr << INFO_EMOJI << "Approximated max VV adjacency: " << max << std::endl;
+    return max;
+}
+
+std::unique_ptr<VV_Data> make_VV_GPU(const TV_Data & TV,
+                                     const vtkIdType n_cells,
+                                     const vtkIdType n_points,
+                                     const arguments args) {
+    std::unique_ptr<VV_Data> vertex_adjacency = std::make_unique<VV_Data>();
+    vertex_adjacency->resize(n_points); // RESIZE so we can emplace within VV_Data vectors
+
+    // Marshall data to GPU
+    vtkIdType * tv_device = nullptr;
+    make_TV_for_GPU(&tv_device, TV);
+
+    // We kind of need to know the max-adjacency, but don't have to know it
+    // precisely
+    vtkIdType max_VV_guess = get_approx_max_VV(TV, n_points);
+    // Compute the relationship
+    size_t vv_size = sizeof(vtkIdType) * n_points * max_VV_guess,
+           vv_index_size = sizeof(unsigned long long int) * n_points;
+    vtkIdType * vv_computed = nullptr,
+              * vv_host = nullptr;
+    unsigned long long int * vv_index = nullptr,
+                           * vv_index_host = nullptr;
+    CUDA_ASSERT(cudaMalloc((void**)&vv_computed, vv_size));
+    CUDA_ASSERT(cudaMalloc((void**)&vv_index, vv_index_size));
+    CUDA_ASSERT(cudaMallocHost((void**)&vv_host, vv_size));
+    CUDA_ASSERT(cudaMallocHost((void**)&vv_index_host, vv_index_size));
+    // Pre-populate vv_index!
+    for(vtkIdType i = 0; i < n_points; i++) vv_index_host[i] = 0;
+    CUDA_WARN(cudaMemcpy(vv_index, vv_index_host, vv_index_size, cudaMemcpyHostToDevice));
+    vtkIdType n_to_compute = n_cells * nbVertsInCell;
+    dim3 thread_block_size = 1024,
+         grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
+    std::cout << INFO_EMOJI << "Kernel launch configuration is " << grid_size.x
+              << " grid blocks with " << thread_block_size.x << " threads per block"
+              << std::endl;
+    std::cout << INFO_EMOJI << "The mesh has " << n_cells << " cells and "
+              << n_points << " vertices" << std::endl;
+    std::cout << INFO_EMOJI << "Tids >= " << n_cells * nbVertsInCell
+              << " should auto-exit (" << (thread_block_size.x * grid_size.x) - n_to_compute
+              << ")" << std::endl;
+    Timer kernel;
+    KERNEL_WARN(VV_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
+                            thread_block_size>>>(tv_device,
+                                n_cells,
+                                n_points,
+                                max_VV_guess,
+                                vv_index,
+                                vv_computed));
+    CUDA_WARN(cudaDeviceSynchronize());
+    kernel.tick();
+    kernel.label_prev_interval("GPU kernel duration");
+    kernel.tick();
+    CUDA_WARN(cudaMemcpy(vv_host, vv_computed, vv_size, cudaMemcpyDeviceToHost));
+    CUDA_WARN(cudaMemcpy(vv_index_host, vv_index, vv_index_size, cudaMemcpyDeviceToHost));
+    kernel.tick();
+    kernel.label_prev_interval("GPU Device->Host transfer");
+    kernel.tick();
+    // Reconfigure for host-side structure
+    for (vtkIdType i = 0; i < n_points; i++) {
+        for (vtkIdType basis = i * max_VV_guess, j = 0; j < vv_index_host[i]; j++) {
+            (*vertex_adjacency)[i].emplace_back(vv_host[basis+j]);
+        }
+    }
+    kernel.tick();
+    kernel.label_prev_interval("GPU Device->Host translation");
+    // Free device memory
+    if (tv_device != nullptr) CUDA_WARN(cudaFree(tv_device));
+    if (vv_index != nullptr) CUDA_WARN(cudaFree(vv_index));
+    if (vv_computed != nullptr) CUDA_WARN(cudaFree(vv_computed));
+    if (vv_host != nullptr) CUDA_WARN(cudaFreeHost(vv_host));
+    if (vv_index_host != nullptr) CUDA_WARN(cudaFreeHost(vv_index_host));
+    return vertex_adjacency;
 }
 

@@ -249,3 +249,38 @@ std::unique_ptr<FE_Data> elective_make_FE(const VF_Data & VF,
     return edgeList;
 }
 
+std::unique_ptr<VV_Data> elective_make_VV(const TV_Data & TV,
+                                          const vtkIdType n_points,
+                                          const arguments args) {
+    std::unique_ptr<VV_Data> adjacencies = std::make_unique<VV_Data>(n_points);
+    // Vertices are adjacent to all other vertices in a cell they appear in
+    // This is a once-over pass, just don't double-enter the data (common edge
+    // or common face would lead to duplicates)
+    std::for_each(TV.begin(), TV.end(),
+            [&](const std::array<vtkIdType,nbVertsInCell>& cell) {
+                // One-loop to make adjacencies for each vertex in the cell
+                for (const vtkIdType src_vertex : cell) {
+                    // Double-loop to get adjacent to src vertex within THIS cell
+                    for (const vtkIdType v : cell) {
+                        if (v == src_vertex) continue;
+                        auto index = std::find(begin((*adjacencies)[src_vertex]),
+                                               end((*adjacencies)[src_vertex]),
+                                               v);
+                        if (index == std::end((*adjacencies)[src_vertex])) {
+                            // New adjacency
+                            (*adjacencies)[src_vertex].emplace_back(v);
+                        }
+                        // else old adjacency from another cell; skip
+                    }
+                }
+            });
+    // Possible global information: longest adjacency?
+    vtkIdType longest_adjacency = 0;
+    for (const std::vector<vtkIdType>& list : (*adjacencies)) {
+        if (list.size() > longest_adjacency) longest_adjacency = list.size();
+    }
+    std::cerr << INFO_EMOJI << "Longest vertex adjacency: " << longest_adjacency
+              << std::endl;
+    return adjacencies;
+}
+

@@ -80,7 +80,7 @@ bool check_host_vs_device_EV(const EV_Data & host_EV,
             else {
                 n_found++;
                 n_inverted++;
-                if (n_printed < 10) {
+                if (n_printed < MAX_TO_PRINT) {
                     std::cout << WARN_EMOJI
                               << "Matched INVERTED edge between host and device ("
                               << reversed_edge[0] << ", " << reversed_edge[1] << ")"
@@ -91,7 +91,7 @@ bool check_host_vs_device_EV(const EV_Data & host_EV,
         }
         else {
             n_found++;
-            if (n_printed < 10) {
+            if (n_printed < MAX_TO_PRINT) {
                 std::cout << OK_EMOJI << "Matched edge between host and device ("
                           << EV_Array[0] << ", " << EV_Array[1] << ")"
                           << std::endl;
@@ -259,7 +259,7 @@ bool check_host_vs_device_TE(const TE_Data & host, const TE_Data & device) {
         }
         else {
             n_found++;
-            if (n_printed < 10) {
+            if (n_printed < MAX_TO_PRINT) {
                 std::cout << OK_EMOJI << "Matched edge set between host and device ("
                     << EdgeArray[0] << ", " << EdgeArray[1] << ", "
                     << EdgeArray[2] << ", " << EdgeArray[3] << ", "
@@ -340,7 +340,7 @@ bool check_host_vs_device_FV(FV_Data & host_FV,
         }
         else {
             n_found++;
-            if (n_printed < 10) {
+            if (n_printed < MAX_TO_PRINT) {
                 std::cout << OK_EMOJI << "Matched face between host and device ("
                           << face.id << ", " << face.middleVert << ", "
                           << face.highVert << ")" << std::endl;
@@ -376,18 +376,215 @@ bool check_host_vs_device_VT(const VT_Data & host_VT, const VT_Data & device_VT)
     return false;
 }
 bool check_host_vs_device_TT(const TT_Data & host_TT, const TT_Data & device_TT) {
-    std::cerr << EXCLAIM_EMOJI << "Not implemented yet" << std::endl;
-    return false;
+    if (host_TT.size() != device_TT.size()) {
+        std::cerr << EXCLAIM_EMOJI << "Device TT size (" << device_TT.size()
+                  << ") != Host TT size (" << host_TT.size()
+                  << ")" << std::endl;
+        return false;
+    }
+    long long int idx = 0,
+                  n_printed = 0,
+                  n_found = 0,
+                  n_failures = 0,
+                  n_failures_before_early_exit = MAX_ERRORS,
+                  n_failures_to_print = MAX_TO_PRINT;
+    for (const auto AdjArray : host_TT) {
+        if (idx % 1000 == 0)
+            std::cerr << INFO_EMOJI << "Process cell " << idx << "("
+                      << n_failures << " failures so far "
+                      << 100 * n_failures / static_cast<float>(idx)
+                      << " %)" << std::endl;
+        // Adjacencies are always aligned on first vector dimension, order within
+        // does not matter so just find it there or not
+        for (const auto cell : AdjArray) {
+            auto index = std::find(begin(device_TT[idx]), end(device_TT[idx]), cell);
+            if (index == std::end(device_TT[idx])) {
+                n_failures++;
+                if (n_printed < MAX_TO_PRINT) {
+                    std::cerr << WARN_EMOJI << "Could not find cell ID "
+                              << cell << " as being adjacent to cell ID "
+                              << idx << " in device_TT!" << std::endl;
+                    n_printed++;
+                }
+                if (n_failures_before_early_exit > 0 &&
+                        n_failures >= n_failures_before_early_exit) return false;
+            }
+            else {
+                n_found++;
+                if (n_printed < MAX_TO_PRINT) {
+                    std::cout << OK_EMOJI << "Matched cell ID " << cell
+                              << " as adjacent to cell ID " << idx
+                              << std::endl;
+                    n_printed++;
+                }
+            }
+        }
+        idx++;
+    }
+    std::cerr << INFO_EMOJI << "Matched " << n_found << " adjacencies"
+              << std::endl;
+    if (n_failures_before_early_exit == 0 && n_failures > 0)
+        std::cerr << EXCLAIM_EMOJI << "Failed to match " << n_failures
+                  << " adjacencies" << std::endl;
+    return n_failures == 0;
 }
 bool check_host_vs_device_FF(const FF_Data & host_FF, const FF_Data & device_FF) {
-    std::cerr << EXCLAIM_EMOJI << "Not implemented yet" << std::endl;
-    return false;
+    if (host_FF.size() != device_FF.size()) {
+        std::cerr << EXCLAIM_EMOJI << "Device FF size (" << device_FF.size()
+                  << ") != Host FF size (" << host_FF.size()
+                  << ")" << std::endl;
+        return false;
+    }
+    long long int idx = 0,
+                  n_printed = 0,
+                  n_found = 0,
+                  n_failures = 0,
+                  n_failures_before_early_exit = MAX_ERRORS,
+                  n_failures_to_print = MAX_TO_PRINT;
+    for (const auto AdjArray : host_FF) {
+        if (idx % 1000 == 0)
+            std::cerr << INFO_EMOJI << "Process face " << idx << "("
+                      << n_failures << " failures so far "
+                      << 100 * n_failures / static_cast<float>(idx)
+                      << " %)" << std::endl;
+        // Adjacencies are always aligned on first vector dimension, order within
+        // does not matter so just find it there or not
+        for (const auto face : AdjArray) {
+            auto index = std::find(begin(device_FF[idx]), end(device_FF[idx]), face);
+            if (index == std::end(device_FF[idx])) {
+                n_failures++;
+                if (n_printed < MAX_TO_PRINT) {
+                    std::cerr << WARN_EMOJI << "Could not find face ID "
+                              << face << " as being adjacent to face ID "
+                              << idx << " in device_FF!" << std::endl;
+                    n_printed++;
+                }
+                if (n_failures_before_early_exit > 0 &&
+                        n_failures >= n_failures_before_early_exit) return false;
+            }
+            else {
+                n_found++;
+                if (n_printed < MAX_TO_PRINT) {
+                    std::cout << OK_EMOJI << "Matched face ID " << face
+                              << " as adjacent to face ID " << idx
+                              << std::endl;
+                    n_printed++;
+                }
+            }
+        }
+        idx++;
+    }
+    std::cerr << INFO_EMOJI << "Matched " << n_found << " adjacencies"
+              << std::endl;
+    if (n_failures_before_early_exit == 0 && n_failures > 0)
+        std::cerr << EXCLAIM_EMOJI << "Failed to match " << n_failures
+                  << " adjacencies" << std::endl;
+    return n_failures == 0;
 }
 bool check_host_vs_device_EE(const EE_Data & host_EE, const EE_Data & device_EE) {
-    std::cerr << EXCLAIM_EMOJI << "Not implemented yet" << std::endl;
-    return false;
+    if (host_EE.size() != device_EE.size()) {
+        std::cerr << EXCLAIM_EMOJI << "Device EE size (" << device_EE.size()
+                  << ") != Host EE size (" << host_EE.size()
+                  << ")" << std::endl;
+        return false;
+    }
+    long long int idx = 0,
+                  n_printed = 0,
+                  n_found = 0,
+                  n_failures = 0,
+                  n_failures_before_early_exit = MAX_ERRORS,
+                  n_failures_to_print = MAX_TO_PRINT;
+    for (const auto AdjArray : host_EE) {
+        if (idx % 1000 == 0)
+            std::cerr << INFO_EMOJI << "Process edge " << idx << "("
+                      << n_failures << " failures so far "
+                      << 100 * n_failures / static_cast<float>(idx)
+                      << " %)" << std::endl;
+        // Adjacencies are always aligned on first vector dimension, order within
+        // does not matter so just find it there or not
+        for (const auto edge : AdjArray) {
+            auto index = std::find(begin(device_EE[idx]), end(device_EE[idx]), edge);
+            if (index == std::end(device_EE[idx])) {
+                n_failures++;
+                if (n_printed < MAX_TO_PRINT) {
+                    std::cerr << WARN_EMOJI << "Could not find edge ID "
+                              << edge << " as being adjacent to edge ID "
+                              << idx << " in device_EE!" << std::endl;
+                    n_printed++;
+                }
+                if (n_failures_before_early_exit > 0 &&
+                        n_failures >= n_failures_before_early_exit) return false;
+            }
+            else {
+                n_found++;
+                if (n_printed < MAX_TO_PRINT) {
+                    std::cout << OK_EMOJI << "Matched edge ID " << edge
+                              << " as adjacent to edge ID " << idx
+                              << std::endl;
+                    n_printed++;
+                }
+            }
+        }
+        idx++;
+    }
+    std::cerr << INFO_EMOJI << "Matched " << n_found << " adjacencies"
+              << std::endl;
+    if (n_failures_before_early_exit == 0 && n_failures > 0)
+        std::cerr << EXCLAIM_EMOJI << "Failed to match " << n_failures
+                  << " adjacencies" << std::endl;
+    return n_failures == 0;
 }
 bool check_host_vs_device_VV(const VV_Data & host_VV, const VV_Data & device_VV) {
-    std::cerr << EXCLAIM_EMOJI << "Not implemented yet" << std::endl;
-    return false;
+    if (host_VV.size() != device_VV.size()) {
+        std::cerr << EXCLAIM_EMOJI << "Device VV size (" << device_VV.size()
+                  << ") != Host VV size (" << host_VV.size()
+                  << ")" << std::endl;
+        return false;
+    }
+    long long int idx = 0,
+                  n_printed = 0,
+                  n_found = 0,
+                  n_failures = 0,
+                  n_failures_before_early_exit = MAX_ERRORS,
+                  n_failures_to_print = MAX_TO_PRINT;
+    for (const auto AdjArray : host_VV) {
+        if (idx % 1000 == 0)
+            std::cerr << INFO_EMOJI << "Process vertex " << idx << "("
+                      << n_failures << " failures so far "
+                      << 100 * n_failures / static_cast<float>(idx)
+                      << " %)" << std::endl;
+        // Adjacencies are always aligned on first vector dimension, order within
+        // does not matter so just find it there or not
+        for (const auto vertex : AdjArray) {
+            auto index = std::find(begin(device_VV[idx]), end(device_VV[idx]), vertex);
+            if (index == std::end(device_VV[idx])) {
+                n_failures++;
+                if (n_printed < MAX_TO_PRINT) {
+                    std::cerr << WARN_EMOJI << "Could not find vertex ID "
+                              << vertex << " as being adjacent to vertex ID "
+                              << idx << " in device_VV!" << std::endl;
+                    n_printed++;
+                }
+                if (n_failures_before_early_exit > 0 &&
+                        n_failures >= n_failures_before_early_exit) return false;
+            }
+            else {
+                n_found++;
+                if (n_printed < MAX_TO_PRINT) {
+                    std::cout << OK_EMOJI << "Matched vertex ID " << vertex
+                              << " as adjacent to vertex ID " << idx
+                              << std::endl;
+                    n_printed++;
+                }
+            }
+        }
+        idx++;
+    }
+    std::cerr << INFO_EMOJI << "Matched " << n_found << " adjacencies"
+              << std::endl;
+    if (n_failures_before_early_exit == 0 && n_failures > 0)
+        std::cerr << EXCLAIM_EMOJI << "Failed to match " << n_failures
+                  << " adjacencies" << std::endl;
+    return n_failures == 0;
 }
+
