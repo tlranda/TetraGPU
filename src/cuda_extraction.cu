@@ -143,8 +143,8 @@ void make_VE_for_GPU(vtkIdType ** device_vertices,
     CUDA_WARN(cudaMemcpy(*device_first_vertex, host_first_vertices,
                          index_vertex_size, cudaMemcpyHostToDevice));
     ve_translation.tick();
-    ve_translation.label_interval(0, "VE Host->GPU Translation");
-    ve_translation.label_interval(1, "VE Host->GPU Data Transfer");
+    ve_translation.label_interval(0, RED_COLOR "VE" RESET_COLOR " Host->GPU Translation");
+    ve_translation.label_interval(1, RED_COLOR "VE" RESET_COLOR " Host->GPU Data Transfer");
     CUDA_WARN(cudaFreeHost(host_vertices));
     CUDA_WARN(cudaFreeHost(host_edges));
     CUDA_WARN(cudaFreeHost(host_first_vertices));
@@ -233,8 +233,8 @@ void make_VF_for_GPU(vtkIdType ** device_vertices,
     CUDA_WARN(cudaMemcpy(*device_first_faces, host_first_faces, index_face_size,
                          cudaMemcpyHostToDevice));
     vf_translation.tick();
-    vf_translation.label_interval(0, "VF Host->GPU Translation");
-    vf_translation.label_interval(1, "VF Host->GPU Data Transfer");
+    vf_translation.label_interval(0, RED_COLOR "VF" RESET_COLOR " Host->GPU Translation");
+    vf_translation.label_interval(1, RED_COLOR "VF" RESET_COLOR " Host->GPU Data Transfer");
     CUDA_WARN(cudaFreeHost(host_vertices));
     CUDA_WARN(cudaFreeHost(host_faces));
     CUDA_WARN(cudaFreeHost(host_first_faces));
@@ -971,7 +971,7 @@ vtkIdType get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points) {
                 }
             });
     max *= 3; // Connected to 3 unique vertices for each cell present in
-    std::cerr << INFO_EMOJI << "Approximated max VV adjacency: " << max << std::endl;
+    std::cerr << INFO_EMOJI << "Approximated max " YELLOW_COLOR "VV" RESET_COLOR " adjacency: " << max << std::endl;
     return max;
 }
 

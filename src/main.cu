@@ -27,7 +27,7 @@
 */
 
 __global__ void dummy_kernel(void) {
-    int tid = (blockIdx.x * blockDim.x) + threadIdx.x;
+    //int tid = (blockIdx.x * blockDim.x) + threadIdx.x;
 }
 
 int main(int argc, char *argv[]) {
@@ -54,7 +54,7 @@ int main(int argc, char *argv[]) {
     // MANDATORY: TV (green) [from storage]
     std::cout << PUSHPIN_EMOJI << "Parsing vtu file: " << args.fileName
               << std::endl;
-    timer.label_next_interval("TV from VTK");
+    timer.label_next_interval(GREEN_COLOR "TV" RESET_COLOR " from VTK");
     timer.tick();
     // Should utilize VTK API and then de-allocate all of its heap
     std::unique_ptr<TV_Data> TV = get_TV_from_VTK(args);
@@ -68,11 +68,11 @@ int main(int argc, char *argv[]) {
     timer.tick();
     vtkIdType edgeCount;
     if (args.build_TE() || args.build_ET()) {
-        timer.label_next_interval("TE and VE [CPU]");
+        timer.label_next_interval(GREEN_COLOR "TE" RESET_COLOR " and " RED_COLOR "VE" RESET_COLOR " [CPU]");
         edgeCount = make_TE_and_VE(*TV, *TE, *VE);
     }
     else {
-        timer.label_next_interval("VE [CPU]");
+        timer.label_next_interval(RED_COLOR "VE" RESET_COLOR " [CPU]");
         edgeCount = make_VE(*TV, *VE);
     }
     timer.tick_announce();
@@ -81,15 +81,15 @@ int main(int argc, char *argv[]) {
     // OPTIONAL: EV (green) [VE']
     if (args.build_EV()) {
         // CPU
-        timer.label_next_interval("EV [CPU]");
+        timer.label_next_interval(GREEN_COLOR "EV" RESET_COLOR " [CPU]");
         timer.tick();
         std::unique_ptr<EV_Data> EV = elective_make_EV(*VE, TV->nPoints,
                                                        edgeCount, args);
         timer.tick_announce();
 
         // GPU
-        std::cout << PUSHPIN_EMOJI << "Using GPU to compute EV" << std::endl;
-        timer.label_next_interval("EV [GPU]");
+        std::cout << PUSHPIN_EMOJI << "Using GPU to compute " GREEN_COLOR "EV" RESET_COLOR << std::endl;
+        timer.label_next_interval(GREEN_COLOR "EV" RESET_COLOR " [GPU]");
         timer.tick();
         std::unique_ptr<EV_Data> device_EV = make_EV_GPU(*VE, TV->nPoints,
                                                          edgeCount, args);
@@ -98,15 +98,15 @@ int main(int argc, char *argv[]) {
         #ifdef VALIDATE_GPU
         // VALIDATION
         if (args.validate()) {
-            timer.label_next_interval("Validate GPU EV");
+            timer.label_next_interval("Validate GPU " GREEN_COLOR "EV" RESET_COLOR);
             timer.tick();
             if (check_host_vs_device_EV(*EV, *device_EV)) {
-                std::cout << OK_EMOJI << "GPU EV results validated by CPU"
+                std::cout << OK_EMOJI << "GPU " GREEN_COLOR "EV" RESET_COLOR " results validated by CPU"
                           << std::endl;
             }
             else {
                 std::cerr << EXCLAIM_EMOJI
-                          << "ALERT! GPU EV results do NOT match CPU results!"
+                          << "ALERT! GPU " GREEN_COLOR "EV" RESET_COLOR " results do NOT match CPU results!"
                           << std::endl;
             }
             timer.tick_announce();
@@ -118,8 +118,8 @@ int main(int argc, char *argv[]) {
     // Required for ET as well
     if (args.build_TE() || args.build_ET()) {
         // CPU already prepared, GPU
-        std::cout << PUSHPIN_EMOJI << "Using GPU to compute TE" << std::endl;
-        timer.label_next_interval("TE [GPU]");
+        std::cout << PUSHPIN_EMOJI << "Using GPU to compute " GREEN_COLOR "TE" RESET_COLOR << std::endl;
+        timer.label_next_interval(GREEN_COLOR "TE" RESET_COLOR " [GPU]");
         timer.tick();
         std::unique_ptr<TE_Data> device_TE = make_TE_GPU(*TV, *VE, TV->nPoints, edgeCount, TV->nCells, args);
         timer.tick_announce();
@@ -127,15 +127,15 @@ int main(int argc, char *argv[]) {
         #ifdef VALIDATE_GPU
         // VALIDATION
         if (args.validate() && args.build_TE()) {
-            timer.label_next_interval("Validate GPU TE");
+            timer.label_next_interval("Validate GPU " GREEN_COLOR "TE" RESET_COLOR);
             timer.tick();
             if (check_host_vs_device_TE(*TE, *device_TE)) {
-                std::cout << OK_EMOJI << "GPU TE results validated by CPU"
+                std::cout << OK_EMOJI << "GPU " GREEN_COLOR "TE" RESET_COLOR " results validated by CPU"
                           << std::endl;
             }
             else {
                 std::cerr << EXCLAIM_EMOJI
-                          << "ALERT! GPU TE results do NOT match CPU results!"
+                          << "ALERT! GPU " GREEN_COLOR "TE" RESET_COLOR " results do NOT match CPU results!"
                           << std::endl;
             }
             timer.tick_announce();
@@ -145,16 +145,16 @@ int main(int argc, char *argv[]) {
         // OPTIONAL: ET (red) [TE' == (TV x VE)']
         if (args.build_ET()) {
             // CPU
-            timer.label_next_interval("ET [CPU]");
+            timer.label_next_interval(RED_COLOR "ET" RESET_COLOR " [CPU]");
             timer.tick();
             // we can also get edgeStars from TE (ET)
             std::unique_ptr<ET_Data> ET = elective_make_ET(*TE, edgeCount, args);
             timer.tick_announce();
 
             // GPU
-            std::cout << PUSHPIN_EMOJI << "Using GPU to compute ET" << std::endl;
+            std::cout << PUSHPIN_EMOJI << "Using GPU to compute " RED_COLOR "ET" RESET_COLOR << std::endl;
             std::cerr << EXCLAIM_EMOJI << "Not implemented yet" << std::endl;
-            timer.label_next_interval("ET [GPU]");
+            timer.label_next_interval(RED_COLOR "ET" RESET_COLOR " [GPU]");
             timer.tick();
             std::unique_ptr<ET_Data> device_ET = make_ET_GPU(*TV, *VE, TV->nPoints,
                                                              edgeCount, args);
@@ -163,15 +163,15 @@ int main(int argc, char *argv[]) {
             #ifdef VALIDATE_GPU
             // VALIDATION
             if (args.validate()) {
-                timer.label_next_interval("Validate GPU ET");
+                timer.label_next_interval("Validate GPU " RED_COLOR "ET" RESET_COLOR);
                 timer.tick();
                 if (check_host_vs_device_ET(*ET, *device_ET)) {
-                    std::cout << OK_EMOJI << "GPU ET results validated by CPU"
+                    std::cout << OK_EMOJI << "GPU " RED_COLOR "ET" RESET_COLOR " results validated by CPU"
                               << std::endl;
                 }
                 else {
                     std::cerr << EXCLAIM_EMOJI
-                              << "ALERT! GPU ET results do NOT match CPU results!"
+                              << "ALERT! GPU " RED_COLOR "ET" RESET_COLOR " results do NOT match CPU results!"
                               << std::endl;
                 }
                 timer.tick_announce();
@@ -193,11 +193,11 @@ int main(int argc, char *argv[]) {
         // only valid during make_TF_and_VF() and afterwards you will get valid
         // and (likely)defined behavior of all 0's :(
         TF->resize(TV->nCells);
-        timer.label_next_interval("TF and VF [CPU]");
+        timer.label_next_interval(GREEN_COLOR "TF" RESET_COLOR " and " RED_COLOR "VF" RESET_COLOR " [CPU]");
         faceCount = make_TF_and_VF(*TV, *TF, *VF);
     }
     else {
-        timer.label_next_interval("VF [CPU]");
+        timer.label_next_interval(RED_COLOR "VF" RESET_COLOR " [CPU]");
         faceCount = make_VF(*TV, *VF);
     }
     timer.tick_announce();
@@ -205,8 +205,8 @@ int main(int argc, char *argv[]) {
 
     // OPTIONAL: TF (green) [TV x VF]
     if (args.build_TF()) {
-        std::cout << PUSHPIN_EMOJI << "Using GPU to compute TF" << std::endl;
-        timer.label_next_interval("TF [GPU]");
+        std::cout << PUSHPIN_EMOJI << "Using GPU to compute " GREEN_COLOR "TF" RESET_COLOR << std::endl;
+        timer.label_next_interval(GREEN_COLOR "TF" RESET_COLOR " [GPU]");
         timer.tick();
         std::unique_ptr<TF_Data> device_TF = make_TF_GPU(*TV, *VF, TV->nPoints,
                                                          faceCount, TV->nCells,
@@ -214,15 +214,15 @@ int main(int argc, char *argv[]) {
         timer.tick_announce();
         #ifdef VALIDATE_GPU
         if (args.validate()) {
-            timer.label_next_interval("Validate GPU TF");
+            timer.label_next_interval("Validate GPU " GREEN_COLOR "TF" RESET_COLOR);
             timer.tick();
             if(check_host_vs_device_TF(*TF, *device_TF)) {
-                std::cout << OK_EMOJI << "GPU TF results validated by CPU"
+                std::cout << OK_EMOJI << "GPU " GREEN_COLOR "TF" RESET_COLOR " results validated by CPU"
                           << std::endl;
             }
             else {
                 std::cerr << EXCLAIM_EMOJI
-                          << "ALERT! GPU TF results do NOT match CPU results!"
+                          << "ALERT! GPU " GREEN_COLOR "TF" RESET_COLOR " results do NOT match CPU results!"
                           << std::endl;
             }
             timer.tick_announce();
@@ -232,28 +232,28 @@ int main(int argc, char *argv[]) {
 
     // OPTIONAL: FV (green) [VF']
     if (args.build_FV()) {
-        std::cout << PUSHPIN_EMOJI << "Using CPU to compute FV" << std::endl;
-        timer.label_next_interval("FV [CPU]");
+        std::cout << PUSHPIN_EMOJI << "Using CPU to compute " GREEN_COLOR "FV" RESET_COLOR << std::endl;
+        timer.label_next_interval(GREEN_COLOR "FV" RESET_COLOR "[CPU]");
         timer.tick();
         std::unique_ptr<FV_Data> FV = elective_make_FV(*VF, faceCount, args);
         timer.tick_announce();
-        std::cout << PUSHPIN_EMOJI << "Using GPU to compute FV" << std::endl;
-        timer.label_next_interval("FV [GPU]");
+        std::cout << PUSHPIN_EMOJI << "Using GPU to compute " GREEN_COLOR "FV" RESET_COLOR << std::endl;
+        timer.label_next_interval(GREEN_COLOR "FV" RESET_COLOR "[GPU]");
         timer.tick();
         std::unique_ptr<FV_Data> device_FV = make_FV_GPU(*VF, TV->nPoints,
                                                          faceCount, args);
         timer.tick_announce();
         #ifdef VALIDATE_GPU
         if (args.validate()) {
-            timer.label_next_interval("Validate GPU FV");
+            timer.label_next_interval("Validate GPU " GREEN_COLOR "FV" RESET_COLOR);
             timer.tick();
             if(check_host_vs_device_FV(*FV, *device_FV)) {
-                std::cout << OK_EMOJI << "GPU FV results validated by CPU"
+                std::cout << OK_EMOJI << "GPU " GREEN_COLOR "FV" RESET_COLOR " results validated by CPU"
                           << std::endl;
             }
             else {
                 std::cerr << EXCLAIM_EMOJI
-                          << "ALERT! GPU FV results do NOT match CPU results!"
+                          << "ALERT! GPU " GREEN_COLOR "FV" RESET_COLOR " results do NOT match CPU results!"
                           << std::endl;
             }
             timer.tick_announce();
@@ -263,16 +263,16 @@ int main(int argc, char *argv[]) {
 
     // OPTIONAL: FE (green) [VF' x VE]
     if (args.build_FE()) {
-        std::cout << PUSHPIN_EMOJI << "Using CPU to compute FE" << std::endl;
-        timer.label_next_interval("FE [CPU]");
+        std::cout << PUSHPIN_EMOJI << "Using CPU to compute " GREEN_COLOR "FE" RESET_COLOR << std::endl;
+        timer.label_next_interval(GREEN_COLOR "FE" RESET_COLOR " [CPU]");
         timer.tick();
         std::unique_ptr<FE_Data> FE = elective_make_FE(*VF, *VE, TV->nPoints,
                                                        edgeCount, faceCount,
                                                        args);
         timer.tick_announce();
-        std::cout << PUSHPIN_EMOJI << "Using GPU to compute FE" << std::endl;
+        std::cout << PUSHPIN_EMOJI << "Using GPU to compute " GREEN_COLOR "FE" RESET_COLOR << std::endl;
         std::cerr << EXCLAIM_EMOJI << "Not implemented yet" << std::endl;
-        timer.label_next_interval("FE [GPU]");
+        timer.label_next_interval(GREEN_COLOR "FE" RESET_COLOR " [GPU]");
         timer.tick();
         std::unique_ptr<FE_Data> device_FE = make_FE_GPU(*VF, *VE, TV->nPoints,
                                                          edgeCount, faceCount,
@@ -280,15 +280,15 @@ int main(int argc, char *argv[]) {
         timer.tick_announce();
         #ifdef VALIDATE_GPU
         if (args.validate()) {
-            timer.label_next_interval("Validate GPU FE");
+            timer.label_next_interval("Validate GPU " GREEN_COLOR "FE" RESET_COLOR);
             timer.tick();
             if(check_host_vs_device_FE(*FE, *device_FE)) {
-                std::cout << OK_EMOJI << "GPU FE results validated by CPU"
+                std::cout << OK_EMOJI << "GPU " GREEN_COLOR "FE" RESET_COLOR " results validated by CPU"
                           << std::endl;
             }
             else {
                 std::cerr << EXCLAIM_EMOJI
-                          << "ALERT! GPU FE results do NOT match CPU results!"
+                          << "ALERT! GPU " GREEN_COLOR "FE" RESET_COLOR " results do NOT match CPU results!"
                           << std::endl;
             }
             timer.tick_announce();
@@ -322,29 +322,28 @@ int main(int argc, char *argv[]) {
     }
     // OPTIONAL: VV (yellow) [TV' x TV]
     if (args.build_VV()) {
-        std::cout << PUSHPIN_EMOJI << "Using CPU to compute VV" << std::endl;
-        timer.label_next_interval("VV [CPU]");
+        std::cout << PUSHPIN_EMOJI << "Using CPU to compute " YELLOW_COLOR "VV" RESET_COLOR << std::endl;
+        timer.label_next_interval(YELLOW_COLOR "VV" RESET_COLOR " [CPU]");
         timer.tick();
         std::unique_ptr<VV_Data> VV = elective_make_VV(*TV, TV->nPoints, args);
         timer.tick_announce();
-        std::cout << PUSHPIN_EMOJI << "Using GPU to compute VV" << std::endl;
-        std::cerr << EXCLAIM_EMOJI << "Not implemented yet" << std::endl;
-        timer.label_next_interval("VV [GPU]");
+        std::cout << PUSHPIN_EMOJI << "Using GPU to compute " YELLOW_COLOR "VV" RESET_COLOR << std::endl;
+        timer.label_next_interval(YELLOW_COLOR "VV" RESET_COLOR " [GPU]");
         timer.tick();
         std::unique_ptr<VV_Data> device_VV = make_VV_GPU(*TV, TV->nCells,
                                                          TV->nPoints, args);
         timer.tick_announce();
         #ifdef VALIDATE_GPU
         if (args.validate()) {
-            timer.label_next_interval("Validate GPU VV");
+            timer.label_next_interval("Validate GPU " YELLOW_COLOR "VV" RESET_COLOR);
             timer.tick();
             if (check_host_vs_device_VV(*VV, *device_VV)) {
-                std::cout << OK_EMOJI << "GPU VV results validated by CPU"
+                std::cout << OK_EMOJI << "GPU " YELLOW_COLOR "VV" RESET_COLOR " results validated by CPU"
                           << std::endl;
             }
             else {
                     std::cerr << EXCLAIM_EMOJI
-                              << "ALERT! GPU VV results do NOT match CPU results!"
+                              << "ALERT! GPU " YELLOW_COLOR "VV" RESET_COLOR " results do NOT match CPU results!"
                               << std::endl;
             }
             timer.tick_announce();
