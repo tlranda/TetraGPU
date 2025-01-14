@@ -545,6 +545,9 @@ bool check_host_vs_device_VV(const VV_Data & host_VV, const VV_Data & device_VV)
                   n_printed = 0,
                   n_found = 0,
                   n_failures = 0,
+                  n_overages = 0,
+                  n_sum_amount_over = 0,
+                  n_biggest_over = 0,
                   n_failures_before_early_exit = MAX_ERRORS,
                   n_failures_to_print = MAX_TO_PRINT;
     for (const auto AdjArray : host_VV) {
@@ -555,6 +558,20 @@ bool check_host_vs_device_VV(const VV_Data & host_VV, const VV_Data & device_VV)
                       << " %)" << std::endl;
         // Adjacencies are always aligned on first vector dimension, order within
         // does not matter so just find it there or not
+        // However, our implementation COULD result in duplicate data. Check for
+        // that as a non-failure condition
+        long long int overage = device_VV[idx].size() - AdjArray.size();
+        if (overage != 0) {
+            n_overages++;
+            if (n_printed < MAX_TO_PRINT) {
+                std::cerr << WARN_EMOJI << overage
+                          << " extra entries detected in vertex " << idx
+                          << std::endl;
+                n_printed++;
+            }
+            n_sum_amount_over += overage;
+            if (overage > n_biggest_over) n_biggest_over = overage;
+        }
         for (const auto vertex : AdjArray) {
             auto index = std::find(begin(device_VV[idx]), end(device_VV[idx]), vertex);
             if (index == std::end(device_VV[idx])) {
@@ -585,6 +602,13 @@ bool check_host_vs_device_VV(const VV_Data & host_VV, const VV_Data & device_VV)
     if (n_failures_before_early_exit == 0 && n_failures > 0)
         std::cerr << EXCLAIM_EMOJI << "Failed to match " << n_failures
                   << " adjacencies" << std::endl;
+    if (n_overages > 0) {
+        std::cerr << WARN_EMOJI << n_overages << " vertices had extra entries, "
+                  << "with a total of " << n_sum_amount_over << " extra"
+                  << std::endl;
+        std::cerr << "Biggest amount over on a single vertex: "
+                  << n_biggest_over << std::endl;
+    }
     return n_failures == 0;
 }
 

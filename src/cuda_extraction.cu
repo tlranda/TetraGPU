@@ -897,6 +897,23 @@ __global__ void VV_kernel(const vtkIdType * __restrict__ tv,
     v3 = __shfl_sync(0xffffffff, cell_vertex, 3, 4);
 
     // Make sure you haven't already logged v0
+    // RACE CONDITION CONFIRMED -- Between scanning for 'logged' and atomicAdd
+    // another thread (in same warp, block, or grid) may ALSO look at the same
+    // data and determine it isn't logged. As such they'll both get separate
+    // indices to write to and duplicate VV data.
+
+    // WITH the scan, we have 99.5% of vertices with 1+ extra data, for a total
+    // of 55.6% extra data on Bucket.vtu (max extra of +42; max actual degree
+    // is 28; worst-case usage is 70/153 entries in GPU)
+
+    // WITHOUT the scan we have 100% of vertices with 1+ extra data, for a
+    // total of 441% extra data on Bucket.vtu (max extra of +128; max actual
+    // degree is 28; worst-case usage is 156/153 entries in GPU). This STILL
+    // VALIDATES which indicates it wasn't the final vertex and if any data
+    // was overwritten from a subsequent vertex, that data survived by ALSO
+    // being duplicated. The oversubscription factor is not easy to predict for
+    // an arbitrary mesh so this just shows the effectiveness over no protection
+    // of this approach
     bool logged = false;
     if (v0 != cell_vertex) {
         for (vtkIdType i = 0; i < index[cell_vertex]; i++) {
