@@ -9,6 +9,7 @@
 # VTK_DIR := Help CMake find the VTK install directory
 # CUDA_DIR := Help CMake find the CUDA install directory
 # TETRA_CMAKE_ARGS := Additional arguments to CMake (ie: -DCMAKE_CUDA_HOST_COMPILER, -DCMake_CXX_COMPILER)
+# EXE := The main driver to use
 
 validate="${VALIDATE-0}";
 echo "validate='${validate}'";
@@ -20,6 +21,8 @@ cuda_dir="${CUDA_DIR-0}";
 echo "CUDA_DIR='${cuda_dir}'";
 cmake_args="${TETRA_CMAKE_ARGS-0}";
 echo "cmake_args='${cmake_args}'";
+exe="${EXE-0}";
+echo "exe_target='${exe}'";
 
 if [ $# -eq 0 ]; then
     set -- "${@:1}" "Bucket.vtu";
@@ -58,6 +61,11 @@ fi
 if [[ "${debug}" != "0" ]]; then
     cmake_command="${cmake_command} -DCMAKE_BUILD_TYPE=\"Debug\"";
 fi
+if [[ "${exe}" != "0" ]]; then
+    cmake_command="${cmake_command} -DBUILD_${exe}=ON";
+else
+    exe="main";
+fi
 echo $cmake_command;
 eval $cmake_command;
 if [ $? -ne 0 ]; then
@@ -74,13 +82,13 @@ cd ..;
 
 if [[ "${debug}" == "0" ]]; then
     for arg in $@; do
-        task="time ./${build_dir}/main --input $arg -t 24 ${RUNTIME_ARGS} ";
+        task="time ./${build_dir}/${exe} --input $arg -t 24 ${RUNTIME_ARGS} ";
         echo "${task}";
         eval "${task}";
     done;
 else
     echo "Suggested run command:";
     echo "--input $1 ${RUNTIME_ARGS}";
-    cuda-gdb ${build_dir}/main;
+    cuda-gdb ${build_dir}/${exe};
 fi
 

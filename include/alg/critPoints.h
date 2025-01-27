@@ -1,0 +1,7 @@
+#ifndef TETRA_ALG_CRITPOINTS
+#define TETRA_ALG_CRITPOINTS
+
+
+
+#endif
+

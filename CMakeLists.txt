@@ -13,7 +13,19 @@ if (NOT VALIDATE_GPU)
     # Remove validate.cpp from file globbing
     list(REMOVE_ITEM sources src/validate.cpp)
 endif (NOT VALIDATE_GPU)
+option(BUILD_CRITICAL_POINTS "Build Critical Points instead of main tester" OFF)
+if (BUILD_CRITICAL_POINTS)
+    # Remove main.cu from file globbing
+    list(REMOVE_ITEM sources ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cu)
+    # Replace it with critical points driver
+    list(APPEND sources ${CMAKE_CURRENT_SOURCE_DIR}/src/alg/critPoints.cu)
+    message(STATUS "Sources updated for Critical points: ${sources}")
+endif (BUILD_CRITICAL_POINTS)
 add_executable(main ${sources})
+if (BUILD_CRITICAL_POINTS)
+    # Change build executable name
+    set_target_properties(main PROPERTIES OUTPUT_NAME "CRITICAL_POINTS")
+endif (BUILD_CRITICAL_POINTS)
 
 # CUDA Dependency
 # N01 has a whack installation that has to be adjusted

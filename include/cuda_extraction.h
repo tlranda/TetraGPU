@@ -129,6 +129,7 @@ vtkIdType get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points);
 device_VV * make_VV_GPU_return(const TV_Data & TV,
                                const vtkIdType n_cells,
                                const vtkIdType n_points,
+                               const vtkIdType max_VV_guess,
                                const bool free_transients,
                                const arguments args);
 std::unique_ptr<VV_Data> make_VV_GPU(const TV_Data & TV,
