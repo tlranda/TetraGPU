@@ -35,6 +35,7 @@
 
 const int MAX_TO_PRINT = 10;
 const int MAX_ERRORS = 0;
+const bool PRINT_PROGRESS = false;
 
 bool check_host_vs_device_EV(const EV_Data & host_EV,
                              const EV_Data & device_EV) {
@@ -55,7 +56,7 @@ bool check_host_vs_device_EV(const EV_Data & host_EV,
                  n_failures_before_early_exit = MAX_ERRORS,
                  n_failures_to_print = MAX_TO_PRINT;
     for (const auto EV_Array : host_EV) {
-        if (idx % 1000 == 0)
+        if (PRINT_PROGRESS && idx % 1000 == 0)
             std::cerr << INFO_EMOJI << "Process edge " << idx << " ("
                       << n_failures << " failures so far "
                       << 100 * n_failures / static_cast<float>(idx)
@@ -138,7 +139,7 @@ bool check_host_vs_device_TF(TF_Data & host, TF_Data & device) {
                   n_failures_before_early_exit = MAX_ERRORS,
                   n_failures_to_print = MAX_TO_PRINT;
     for (const auto FaceArray : host) {
-        if (idx % 1000 == 0)
+        if (PRINT_PROGRESS && idx % 1000 == 0)
             std::cerr << INFO_EMOJI << "Process cell " << idx << " ("
                       << n_failures << " failures so far "
                       << 100 * n_failures / static_cast<float>(idx)
@@ -206,7 +207,7 @@ bool check_host_vs_device_TE(const TE_Data & host, const TE_Data & device) {
                   n_failures_before_early_exit = MAX_ERRORS,
                   n_failures_to_print = MAX_TO_PRINT;
     for (const auto EdgeArray : host) {
-        if (idx % 1000 == 0)
+        if (PRINT_PROGRESS && idx % 1000 == 0)
             std::cerr << INFO_EMOJI << "Process cell " << idx << " ("
                       << n_failures << " failures so far "
                       << 100 * n_failures / static_cast<float>(idx)
@@ -322,7 +323,7 @@ bool check_host_vs_device_FV(FV_Data & host_FV,
                  n_failures_before_early_exit = MAX_ERRORS,
                  n_failures_to_print = MAX_TO_PRINT;
     for (const auto face : host_FV) {
-        if (idx % 1000 == 0)
+        if (PRINT_PROGRESS && idx % 1000 == 0)
             std::cerr << INFO_EMOJI << "Process edge " << idx << " ("
                       << n_failures << " failures so far "
                       << 100 * n_failures / static_cast<float>(idx)
@@ -389,7 +390,7 @@ bool check_host_vs_device_TT(const TT_Data & host_TT, const TT_Data & device_TT)
                   n_failures_before_early_exit = MAX_ERRORS,
                   n_failures_to_print = MAX_TO_PRINT;
     for (const auto AdjArray : host_TT) {
-        if (idx % 1000 == 0)
+        if (PRINT_PROGRESS && idx % 1000 == 0)
             std::cerr << INFO_EMOJI << "Process cell " << idx << "("
                       << n_failures << " failures so far "
                       << 100 * n_failures / static_cast<float>(idx)
@@ -442,7 +443,7 @@ bool check_host_vs_device_FF(const FF_Data & host_FF, const FF_Data & device_FF)
                   n_failures_before_early_exit = MAX_ERRORS,
                   n_failures_to_print = MAX_TO_PRINT;
     for (const auto AdjArray : host_FF) {
-        if (idx % 1000 == 0)
+        if (PRINT_PROGRESS && idx % 1000 == 0)
             std::cerr << INFO_EMOJI << "Process face " << idx << "("
                       << n_failures << " failures so far "
                       << 100 * n_failures / static_cast<float>(idx)
@@ -495,7 +496,7 @@ bool check_host_vs_device_EE(const EE_Data & host_EE, const EE_Data & device_EE)
                   n_failures_before_early_exit = MAX_ERRORS,
                   n_failures_to_print = MAX_TO_PRINT;
     for (const auto AdjArray : host_EE) {
-        if (idx % 1000 == 0)
+        if (PRINT_PROGRESS && idx % 1000 == 0)
             std::cerr << INFO_EMOJI << "Process edge " << idx << "("
                       << n_failures << " failures so far "
                       << 100 * n_failures / static_cast<float>(idx)
@@ -551,7 +552,7 @@ bool check_host_vs_device_VV(const VV_Data & host_VV, const VV_Data & device_VV)
                   n_failures_before_early_exit = MAX_ERRORS,
                   n_failures_to_print = MAX_TO_PRINT;
     for (const auto AdjArray : host_VV) {
-        if (idx % 1000 == 0)
+        if (PRINT_PROGRESS && idx % 1000 == 0)
             std::cerr << INFO_EMOJI << "Process vertex " << idx << "("
                       << n_failures << " failures so far "
                       << 100 * n_failures / static_cast<float>(idx)

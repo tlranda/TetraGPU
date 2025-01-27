@@ -5,9 +5,12 @@
     * "make_X_for_GPU" functions allocate GPU-side memory for X via a reference
         to a pointer on the caller's frame and use the host to populate
         appropriate values. No kernels, just remapping and data transfer.
-    * "make_X_GPU" functions use GPU-side memory and kernels to create X using
-        the GPU. Currently, these functions remap the memory to host and clean
-        up the device allocation before exiting, but real applications may want
+    * "make_X_GPU_return" functions are internal to "make_X_GPU" functions,
+        they omit a host-side translation and return the X relationship as GPU-
+        side memory that the caller must free to prevent leaks.
+    * "make_X_GPU" functions call the "_return" variant of X and remap the GPU
+        memory layout to something more appropriate for the host. They also free
+        the device allocation before exiting, but real applications may want
         the GPU-side relationship to persist (or to not be remapped in the same
         manner).
     * "X_kernel" functions are the device-side kernels that create new
@@ -56,13 +59,18 @@
         yet.
 */
 
-void make_TV_for_GPU(vtkIdType ** device_tv,
-                           // vector of array of vertices in a tetra
-                     const TV_Data & tv_relationship) {
+vtkIdType * device_TV = nullptr;
+void make_TV_for_GPU(const TV_Data & tv_relationship) {
+    // You should not double-call this! Re-use existing results!
+    if (device_TV != nullptr) {
+        std::cerr << WARN_EMOJI << RED_COLOR << "Double-call to make_TV_for_GPU"
+                  << RESET_COLOR << std::endl;
+        exit(EXIT_FAILURE);
+    }
     // Size determination
     size_t tv_flat_size = sizeof(vtkIdType) * tv_relationship.nCells * nbVertsInCell;
     // Allocations
-    CUDA_ASSERT(cudaMalloc((void**)device_tv, tv_flat_size));
+    CUDA_ASSERT(cudaMalloc((void**)&device_TV, tv_flat_size));
     vtkIdType * host_flat_tv = nullptr;
     CUDA_ASSERT(cudaMallocHost((void**)&host_flat_tv, tv_flat_size));
 
@@ -74,19 +82,24 @@ void make_TV_for_GPU(vtkIdType ** device_tv,
     // Device copy and host free
     // BLOCKING -- provide barrier if made asynchronous to avoid free of host
     // memory before copy completes
-    CUDA_WARN(cudaMemcpy(*device_tv, host_flat_tv,
-                         tv_flat_size, cudaMemcpyHostToDevice));
+    CUDA_WARN(cudaMemcpy(device_TV, host_flat_tv, tv_flat_size,
+                         cudaMemcpyHostToDevice));
     CUDA_WARN(cudaFreeHost(host_flat_tv));
 }
 
-void make_VE_for_GPU(vtkIdType ** device_vertices,
-                     vtkIdType ** device_edges,
-                     vtkIdType ** device_first_vertex,
-                           // vector of vectors of edge IDs
-                     const VE_Data & ve_relationship,
+vtkIdType * device_VE_vertices = nullptr,
+          * device_VE_edges = nullptr,
+          * device_VE_first_vertex = nullptr;
+void make_VE_for_GPU(const VE_Data & ve_relationship,
                      const vtkIdType n_verts,
                      const vtkIdType n_edges
                      ) {
+    if (device_VE_vertices != nullptr || device_VE_edges != nullptr ||
+        device_VE_first_vertex != nullptr) {
+        std::cerr << WARN_EMOJI << RED_COLOR << "Double-call to make_VE_for_GPU"
+                  << RESET_COLOR << std::endl;
+        exit(EXIT_FAILURE);
+    }
     // Size determinations
     size_t vertices_size = sizeof(vtkIdType) * n_edges * nbVertsInEdge,
            // Can technically be half-sized, but duplicate for now so index in
@@ -97,9 +110,9 @@ void make_VE_for_GPU(vtkIdType ** device_vertices,
            edges_size = sizeof(vtkIdType) * n_edges * nbVertsInEdge,
            index_vertex_size = sizeof(vtkIdType) * n_verts;
     // Allocations
-    CUDA_ASSERT(cudaMalloc((void**)device_vertices, vertices_size));
-    CUDA_ASSERT(cudaMalloc((void**)device_edges, edges_size));
-    CUDA_ASSERT(cudaMalloc((void**)device_first_vertex, index_vertex_size));
+    CUDA_ASSERT(cudaMalloc((void**)&device_VE_vertices, vertices_size));
+    CUDA_ASSERT(cudaMalloc((void**)&device_VE_edges, edges_size));
+    CUDA_ASSERT(cudaMalloc((void**)&device_VE_first_vertex, index_vertex_size));
     vtkIdType * host_vertices = nullptr,
               * host_edges = nullptr,
               * host_first_vertices = nullptr;
@@ -107,7 +120,7 @@ void make_VE_for_GPU(vtkIdType ** device_vertices,
     CUDA_ASSERT(cudaMallocHost((void**)&host_edges, edges_size));
     CUDA_ASSERT(cudaMallocHost((void**)&host_first_vertices, index_vertex_size));
 
-    Timer ve_translation;
+    Timer ve_translation(false, "VE_Translation");
     // Set contiguous data in host memory
     // Index defaults to END-OF-LIST to help with scanning
     // while std::fill should work, it can segfault on sizes (see the similar
@@ -136,11 +149,11 @@ void make_VE_for_GPU(vtkIdType ** device_vertices,
     // BLOCKING -- provide barrier if made asynchronous to avoid free of host
     // memory before copy completes
     ve_translation.tick();
-    CUDA_WARN(cudaMemcpy(*device_vertices, host_vertices,
+    CUDA_WARN(cudaMemcpy(device_VE_vertices, host_vertices,
                          vertices_size, cudaMemcpyHostToDevice));
-    CUDA_WARN(cudaMemcpy(*device_edges, host_edges,
+    CUDA_WARN(cudaMemcpy(device_VE_edges, host_edges,
                          edges_size, cudaMemcpyHostToDevice));
-    CUDA_WARN(cudaMemcpy(*device_first_vertex, host_first_vertices,
+    CUDA_WARN(cudaMemcpy(device_VE_first_vertex, host_first_vertices,
                          index_vertex_size, cudaMemcpyHostToDevice));
     ve_translation.tick();
     ve_translation.label_interval(0, RED_COLOR "VE" RESET_COLOR " Host->GPU Translation");
@@ -150,12 +163,18 @@ void make_VE_for_GPU(vtkIdType ** device_vertices,
     CUDA_WARN(cudaFreeHost(host_first_vertices));
 }
 
-void make_VF_for_GPU(vtkIdType ** device_vertices,
-                     vtkIdType ** device_faces,
-                     vtkIdType ** device_first_faces,
-                     const VF_Data & vf_relationship,
+vtkIdType * device_VF_vertices = nullptr,
+          * device_VF_faces = nullptr,
+          * device_VF_first_faces = nullptr;
+void make_VF_for_GPU(const VF_Data & vf_relationship,
                      const vtkIdType n_verts,
                      const vtkIdType n_faces) {
+    if (device_VF_vertices != nullptr || device_VF_faces != nullptr ||
+        device_VF_first_faces != nullptr) {
+        std::cerr << WARN_EMOJI << RED_COLOR << "Double-call to make_VF_for_GPU"
+                  << RESET_COLOR << std::endl;
+        exit(EXIT_FAILURE);
+    }
     // Size determinations
     size_t vertices_size = sizeof(vtkIdType) * n_faces * nbVertsInFace,
            // Can technically be one-third this size, but duplicate for now
@@ -163,9 +182,9 @@ void make_VF_for_GPU(vtkIdType ** device_vertices,
            // Index into other arrays
            index_face_size = sizeof(vtkIdType) * n_verts;
     // Allocations
-    CUDA_ASSERT(cudaMalloc((void**)device_vertices, vertices_size));
-    CUDA_ASSERT(cudaMalloc((void**)device_faces, faces_size));
-    CUDA_ASSERT(cudaMalloc((void**)device_first_faces, index_face_size));
+    CUDA_ASSERT(cudaMalloc((void**)&device_VF_vertices, vertices_size));
+    CUDA_ASSERT(cudaMalloc((void**)&device_VF_faces, faces_size));
+    CUDA_ASSERT(cudaMalloc((void**)&device_VF_first_faces, index_face_size));
     vtkIdType * host_vertices = nullptr,
               * host_faces = nullptr,
               * host_first_faces = nullptr;
@@ -173,7 +192,7 @@ void make_VF_for_GPU(vtkIdType ** device_vertices,
     CUDA_ASSERT(cudaMallocHost((void**)&host_faces, faces_size));
     CUDA_ASSERT(cudaMallocHost((void**)&host_first_faces, index_face_size));
 
-    Timer vf_translation;
+    Timer vf_translation(false, "VF_Translation");
     // Set contiguous data in host memory
     // max_real_value = n_faces * nbVertsInFace
     // While std::fill should work, it can segfault on sizes that otherwise work?
@@ -226,11 +245,11 @@ void make_VF_for_GPU(vtkIdType ** device_vertices,
     // BLOCKING -- provide barrier if made asynchronous to avoid free of host
     // memory before the copy completes
     vf_translation.tick();
-    CUDA_WARN(cudaMemcpy(*device_vertices, host_vertices, vertices_size,
+    CUDA_WARN(cudaMemcpy(device_VF_vertices, host_vertices, vertices_size,
                          cudaMemcpyHostToDevice));
-    CUDA_WARN(cudaMemcpy(*device_faces, host_faces, faces_size,
+    CUDA_WARN(cudaMemcpy(device_VF_faces, host_faces, faces_size,
                          cudaMemcpyHostToDevice));
-    CUDA_WARN(cudaMemcpy(*device_first_faces, host_first_faces, index_face_size,
+    CUDA_WARN(cudaMemcpy(device_VF_first_faces, host_first_faces, index_face_size,
                          cudaMemcpyHostToDevice));
     vf_translation.tick();
     vf_translation.label_interval(0, RED_COLOR "VF" RESET_COLOR " Host->GPU Translation");
@@ -250,34 +269,23 @@ __global__ void EV_kernel(const vtkIdType * __restrict__ vertices,
     ev[(edges[tid] * nbVertsInEdge) + hi_vert] = vertices[tid];
 }
 
-// vector of array of vertices in an edge
-                                     // vector of vector of EdgeData
-std::unique_ptr<EV_Data> make_EV_GPU(const VE_Data & edgeTable,
-                                     const vtkIdType n_points,
-                                     const vtkIdType n_edges,
-                                     const arguments args) {
-    std::unique_ptr<EV_Data> edgeList = std::make_unique<EV_Data>();
-    edgeList->reserve(n_edges);
-
+vtkIdType * make_EV_GPU_return(const VE_Data & edgeTable,
+                               const vtkIdType n_points,
+                               const vtkIdType n_edges,
+                               const bool free_transients,
+                               const arguments args) {
     // Marshall data to GPU
-    vtkIdType * vertices_device = nullptr,
-              * edges_device = nullptr,
-              * index_device = nullptr;
-    make_VE_for_GPU(&vertices_device,
-                    &edges_device,
-                    &index_device,
-                    edgeTable,
-                    n_points,
-                    n_edges
-                    );
-    // Free index_device as EV does not need it
-    if (index_device != nullptr) CUDA_WARN(cudaFree(index_device));
+    if (device_VE_vertices == nullptr && device_VE_edges == nullptr &&
+        device_VE_first_vertex == nullptr) {
+        make_VE_for_GPU(edgeTable, n_points, n_edges);
+    }
+    // Can free the index as EV does not need it -- IFF freeing transients
+    if (free_transients && device_VE_first_vertex != nullptr)
+        CUDA_WARN(cudaFree(device_VE_first_vertex));
     // Compute the relationship
     size_t ev_size = sizeof(vtkIdType) * n_edges * nbVertsInEdge;
-    vtkIdType * ev_computed = nullptr,
-              * ev_host = nullptr;
+    vtkIdType * ev_computed = nullptr;
     CUDA_ASSERT(cudaMalloc((void**)&ev_computed, ev_size));
-    CUDA_ASSERT(cudaMallocHost((void**)&ev_host, ev_size));
     vtkIdType n_to_compute = n_edges * nbVertsInEdge;
     dim3 thread_block_size = 1024,
          grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
@@ -290,17 +298,41 @@ std::unique_ptr<EV_Data> make_EV_GPU(const VE_Data & edgeTable,
               << " should auto-exit ("
               << (thread_block_size.x * grid_size.x) - n_to_compute << ")"
               << std::endl;
-    Timer kernel;
+    Timer kernel(false, "EV_Kernel");
     KERNEL_WARN(EV_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
-                            thread_block_size>>>(vertices_device,
-                                edges_device,
+                            thread_block_size>>>(device_VE_vertices,
+                                device_VE_edges,
                                 n_edges,
                                 ev_computed));
     CUDA_WARN(cudaDeviceSynchronize());
     kernel.tick();
     kernel.label_prev_interval("GPU kernel duration");
+
+    // Free device memory IFF we free transients
+    if (free_transients && device_VE_vertices != nullptr)
+        CUDA_WARN(cudaFree(device_VE_vertices));
+    if (free_transients && device_VE_edges != nullptr)
+        CUDA_WARN(cudaFree(device_VE_edges));
+
+    // Return device pointer
+    return ev_computed;
+}
+std::unique_ptr<EV_Data> make_EV_GPU(const VE_Data & edgeTable,
+                                     const vtkIdType n_points,
+                                     const vtkIdType n_edges,
+                                     const bool free_transients,
+                                     const arguments args) {
+    std::unique_ptr<EV_Data> edgeList = std::make_unique<EV_Data>();
+    edgeList->reserve(n_edges);
+
+    vtkIdType * ev_host = nullptr;
+    size_t ev_size = sizeof(vtkIdType) * n_edges * nbVertsInEdge;
+    CUDA_ASSERT(cudaMallocHost((void**)&ev_host, ev_size));
+    // Make GPU EV
+    vtkIdType * ev_computed = make_EV_GPU_return(edgeTable, n_points, n_edges,
+                                                 free_transients, args);
     // Copy back to host and set in edgeList
-    kernel.tick();
+    Timer kernel(false, "EV_GPU");
     CUDA_WARN(cudaMemcpy(ev_host, ev_computed, ev_size, cudaMemcpyDeviceToHost));
     kernel.tick();
     kernel.label_prev_interval("GPU Device->Host transfer");
@@ -313,8 +345,6 @@ std::unique_ptr<EV_Data> make_EV_GPU(const VE_Data & edgeTable,
     kernel.tick();
     kernel.label_prev_interval("GPU Device->Host translation");
     // Free device memory
-    if (vertices_device != nullptr) CUDA_WARN(cudaFree(vertices_device));
-    if (edges_device != nullptr) CUDA_WARN(cudaFree(edges_device));
     if (ev_computed != nullptr) CUDA_WARN(cudaFree(ev_computed));
     // Free host memory
     if (ev_host != nullptr) CUDA_WARN(cudaFreeHost(ev_host));
@@ -376,30 +406,24 @@ __global__ void TF_kernel(const vtkIdType * __restrict__ tv,
     }
 }
 
-std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
-                                     const VF_Data & VF,
-                                     const vtkIdType n_points,
-                                     const vtkIdType n_faces,
-                                     const vtkIdType n_cells,
-                                     const arguments args) {
-    std::unique_ptr<TF_Data> TF = std::make_unique<TF_Data>();
-    TF->reserve(n_cells);
-
-    // Make data ready for GPU
-    vtkIdType * tv_device = nullptr,
-              * vertices_device = nullptr,
-              * faces_device = nullptr,
-              * first_faces_device = nullptr;
-    make_TV_for_GPU(&tv_device, TV);
-    make_VF_for_GPU(&vertices_device, &faces_device, &first_faces_device, VF,
-                    n_points, n_faces);
+vtkIdType * make_TF_GPU_return(const TV_Data & TV,
+                               const VF_Data & VF,
+                               const vtkIdType n_points,
+                               const vtkIdType n_faces,
+                               const vtkIdType n_cells,
+                               const bool free_transients,
+                               const arguments args) {
+    // Marshall data to GPU
+    if (device_TV == nullptr) make_TV_for_GPU(TV);
+    if (device_VF_vertices == nullptr && device_VF_faces == nullptr &&
+        device_VF_first_faces == nullptr) {
+        make_VF_for_GPU(VF, n_points, n_faces);
+    }
 
     // Compute the relationship
     size_t tf_size = sizeof(vtkIdType) * n_cells * nbFacesInCell;
-    vtkIdType * tf_computed = nullptr,
-              * tf_host = nullptr;
+    vtkIdType * tf_computed = nullptr;
     CUDA_ASSERT(cudaMalloc((void**)&tf_computed, tf_size));
-    CUDA_ASSERT(cudaMallocHost((void**)&tf_host, tf_size));
     vtkIdType n_to_compute = n_cells * nbFacesInCell;
     dim3 thread_block_size = 1024,
          grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
@@ -411,12 +435,12 @@ std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
     std::cout << INFO_EMOJI << "Tids >= " << n_cells * nbFacesInCell << " should auto-exit ("
               << (thread_block_size.x * grid_size .x) - n_to_compute << ")"
               << std::endl;
-    Timer kernel;
+    Timer kernel(false, "TF_Kernel");
     KERNEL_WARN(TF_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
-                            thread_block_size>>>(tv_device,
-                                vertices_device,
-                                faces_device,
-                                first_faces_device,
+                            thread_block_size>>>(device_TV,
+                                device_VF_vertices,
+                                device_VF_faces,
+                                device_VF_first_faces,
                                 n_cells,
                                 n_faces,
                                 n_points,
@@ -424,8 +448,36 @@ std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
     CUDA_WARN(cudaDeviceSynchronize());
     kernel.tick();
     kernel.label_prev_interval("GPU kernel duration");
+    // Free device memory IFF we free transients
+    if (free_transients && device_TV != nullptr)
+        CUDA_WARN(cudaFree(device_TV));
+    if (free_transients && device_VF_vertices != nullptr)
+        CUDA_WARN(cudaFree(device_VF_vertices));
+    if (free_transients && device_VF_faces != nullptr)
+        CUDA_WARN(cudaFree(device_VF_faces));
+    if (free_transients && device_VF_first_faces != nullptr)
+        CUDA_WARN(cudaFree(device_VF_first_faces));
+    // Return device pointer
+    return tf_computed;
+}
+std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
+                                     const VF_Data & VF,
+                                     const vtkIdType n_points,
+                                     const vtkIdType n_faces,
+                                     const vtkIdType n_cells,
+                                     const bool free_transients,
+                                     const arguments args) {
+    std::unique_ptr<TF_Data> TF = std::make_unique<TF_Data>();
+    TF->reserve(n_cells);
+
+    vtkIdType * tf_host = nullptr;
+    size_t tf_size = sizeof(vtkIdType) * n_cells * nbFacesInCell;
+    CUDA_ASSERT(cudaMallocHost((void**)&tf_host, tf_size));
+    // Make GPU TF
+    vtkIdType * tf_computed = make_TF_GPU_return(TV, VF, n_points, n_faces,
+                                                 n_cells, free_transients, args);
     // Copy back to host and set in edgeList
-    kernel.tick();
+    Timer kernel(false, "TF_GPU");
     CUDA_WARN(cudaMemcpy(tf_host, tf_computed, tf_size, cudaMemcpyDeviceToHost));
     kernel.tick();
     kernel.label_prev_interval("GPU Device->Host transfer");
@@ -442,12 +494,9 @@ std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
     kernel.tick();
     kernel.label_prev_interval("GPU Device->Host translation");
     // Free device memory
-    if (tv_device != nullptr) CUDA_WARN(cudaFree(tv_device));
-    if (vertices_device != nullptr) CUDA_WARN(cudaFree(vertices_device));
-    if (faces_device != nullptr) CUDA_WARN(cudaFree(faces_device));
-    if (first_faces_device != nullptr) CUDA_WARN(cudaFree(first_faces_device));
     if (tf_computed != nullptr) CUDA_WARN(cudaFree(tf_computed));
     if (tf_host != nullptr) CUDA_WARN(cudaFreeHost(tf_host));
+
     return TF;
 }
 
@@ -580,37 +629,27 @@ __global__ void TE_kernel(const vtkIdType * __restrict__ tv,
     te_combine(quad0,quad1,quad2,quad3, laneID, te, vertices, edges, n_points,
                first_index);
 }
-// TE = TV x VE
-std::unique_ptr<TE_Data> make_TE_GPU(const TV_Data & TV,
-                                     const VE_Data & VE,
-                                     const vtkIdType n_points,
-                                     const vtkIdType n_edges,
-                                     const vtkIdType n_cells,
-                                     const arguments args) {
-    std::unique_ptr<TE_Data> TE = std::make_unique<TE_Data>();
-    TE->reserve(n_cells);
 
-    // Make ready for GPU
-    vtkIdType * tv_device = nullptr,
-              * vertices_device = nullptr,
-              * edges_device = nullptr,
-              * index_device = nullptr;
-    make_TV_for_GPU(&tv_device, TV);
-    make_VE_for_GPU(&vertices_device,
-                    &edges_device,
-                    &index_device,
-                    VE,
-                    n_points,
-                    n_edges
-                    );
+// TE = TV x VE
+vtkIdType * make_TE_GPU_return(const TV_Data & TV,
+                               const VE_Data & VE,
+                               const vtkIdType n_points,
+                               const vtkIdType n_edges,
+                               const vtkIdType n_cells,
+                               const bool free_transients,
+                               const arguments args) {
+    // Marshall data to GPU
+    if (device_TV == nullptr) make_TV_for_GPU(TV);
+    if (device_VE_vertices == nullptr && device_VE_edges == nullptr &&
+        device_VE_first_vertex == nullptr) {
+        make_VE_for_GPU(VE, n_points, n_edges);
+    }
 
     // Compute relationship
     vtkIdType n_to_compute = n_cells * nbEdgesInCell;
     size_t te_size = sizeof(vtkIdType) * n_to_compute;
-    vtkIdType * te_computed = nullptr,
-              * te_host = nullptr;
+    vtkIdType * te_computed = nullptr;
     CUDA_ASSERT(cudaMalloc((void**)&te_computed, te_size));
-    CUDA_ASSERT(cudaMallocHost((void**)&te_host, te_size));
 
     // Set up launch configuration for the kernel
     const vtkIdType N_THREADS = 416,
@@ -659,13 +698,13 @@ std::unique_ptr<TE_Data> make_TE_GPU(const TV_Data & TV,
         std::cerr << WARN_EMOJI << "Could not set max dynamic shared memory size to "
                   << SHARED_PER_BLOCK << " bytes" << std::endl;
     }
-    Timer kernel;
+    Timer kernel(false, "TE_Kernel");
     KERNEL_WARN(TE_kernel<<<N_BLOCKS KERNEL_LAUNCH_SEPARATOR
                             N_THREADS KERNEL_LAUNCH_SEPARATOR
-                            SHARED_PER_BLOCK>>>(tv_device,
-                                vertices_device,
-                                edges_device,
-                                index_device,
+                            SHARED_PER_BLOCK>>>(device_TV,
+                                device_VE_vertices,
+                                device_VE_edges,
+                                device_VE_first_vertex,
                                 n_cells,
                                 n_edges,
                                 n_points,
@@ -674,8 +713,35 @@ std::unique_ptr<TE_Data> make_TE_GPU(const TV_Data & TV,
     kernel.tick();
     kernel.label_prev_interval("GPU kernel duration");
 
+    // Free device memory IFF we free transients
+    if (free_transients && device_VE_vertices != nullptr)
+        CUDA_WARN(cudaFree(device_VE_vertices));
+    if (free_transients && device_VE_edges != nullptr)
+        CUDA_WARN(cudaFree(device_VE_edges));
+    if (free_transients && device_VE_first_vertex != nullptr)
+        CUDA_WARN(cudaFree(device_VE_first_vertex));
+
+    // Return device pointer
+    return te_computed;
+}
+std::unique_ptr<TE_Data> make_TE_GPU(const TV_Data & TV,
+                                     const VE_Data & VE,
+                                     const vtkIdType n_points,
+                                     const vtkIdType n_edges,
+                                     const vtkIdType n_cells,
+                                     const bool free_transients,
+                                     const arguments args) {
+    std::unique_ptr<TE_Data> TE = std::make_unique<TE_Data>();
+    TE->reserve(n_cells);
+
+    vtkIdType * te_host = nullptr;
+    size_t te_size = sizeof(vtkIdType) * n_cells * nbEdgesInCell;
+    CUDA_ASSERT(cudaMallocHost((void**)&te_host, te_size));
+    // Make GPU TE
+    vtkIdType * te_computed = make_TE_GPU_return(TV, VE, n_points, n_edges,
+                                                 n_cells, free_transients, args);
     // Copy back to host with transformation
-    kernel.tick();
+    Timer kernel(false, "TE_GPU");
     CUDA_WARN(cudaMemcpy(te_host, te_computed, te_size, cudaMemcpyDeviceToHost));
     kernel.tick();
     kernel.label_prev_interval("GPU Device->Host transfer");
@@ -691,11 +757,10 @@ std::unique_ptr<TE_Data> make_TE_GPU(const TV_Data & TV,
     kernel.tick();
     kernel.label_prev_interval("GPU Device->Host translation");
     // Free device memory
-    if (tv_device != nullptr) CUDA_WARN(cudaFree(tv_device));
-    if (vertices_device != nullptr) CUDA_WARN(cudaFree(vertices_device));
-    if (edges_device != nullptr) CUDA_WARN(cudaFree(edges_device));
     if (te_computed != nullptr) CUDA_WARN(cudaFree(te_computed));
+    // Free host memory
     if (te_host != nullptr) CUDA_WARN(cudaFreeHost(te_host));
+
     return TE;
 }
 
@@ -709,33 +774,23 @@ __global__ void FV_kernel(const vtkIdType * __restrict__ vertices,
     fv[(faces[tid] * nbVertsInFace) + vert_idx] = vertices[tid];
 }
 
-std::unique_ptr<FV_Data> make_FV_GPU(const VF_Data & VF,
-                                     const vtkIdType n_points,
-                                     const vtkIdType n_faces,
-                                     const arguments args) {
-    // FV_data = std::vector<FaceData{middleVert,highVert,id}>
-    std::unique_ptr<FV_Data> vertexList = std::make_unique<FV_Data>();
-    vertexList->reserve(n_faces);
-
+vtkIdType * make_FV_GPU_return(const VF_Data & VF,
+                               const vtkIdType n_points,
+                               const vtkIdType n_faces,
+                               const bool free_transients,
+                               const arguments args) {
     // Marshall data to GPU
-    vtkIdType * vertices_device = nullptr,
-              * faces_device = nullptr,
-              * index_device = nullptr;
-    make_VF_for_GPU(&vertices_device,
-                    &faces_device,
-                    &index_device,
-                    VF,
-                    n_points,
-                    n_faces
-                    );
-    // Free index device as FV does not need it
-    if (index_device != nullptr) CUDA_WARN(cudaFree(index_device));
+    if (device_VF_vertices == nullptr && device_VF_faces == nullptr &&
+        device_VF_first_faces == nullptr) {
+        make_VF_for_GPU(VF, n_points, n_faces);
+    }
+    // Free index as FV does not need it
+    if (free_transients && device_VF_first_faces != nullptr)
+        CUDA_WARN(cudaFree(device_VF_first_faces));
     // Compute the relationship
     size_t fv_size = sizeof(vtkIdType) * n_faces * nbVertsInFace;
-    vtkIdType * fv_computed = nullptr,
-              * fv_host = nullptr;
+    vtkIdType * fv_computed = nullptr;
     CUDA_ASSERT(cudaMalloc((void**)&fv_computed, fv_size));
-    CUDA_ASSERT(cudaMallocHost((void**)&fv_host, fv_size));
     vtkIdType n_to_compute = n_faces * nbVertsInFace;
     dim3 thread_block_size = 1024,
          grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
@@ -748,17 +803,42 @@ std::unique_ptr<FV_Data> make_FV_GPU(const VF_Data & VF,
               << " should auto-exit ("
               << (thread_block_size.x * grid_size.x) - n_to_compute << ")"
               << std::endl;
-    Timer kernel;
+    Timer kernel(false, "FV_Kernel");
     KERNEL_WARN(FV_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
-                            thread_block_size>>>(vertices_device,
-                                faces_device,
+                            thread_block_size>>>(device_VF_vertices,
+                                device_VF_faces,
                                 n_faces,
                                 fv_computed));
     CUDA_WARN(cudaDeviceSynchronize());
     kernel.tick();
     kernel.label_prev_interval("GPU kernel duration");
+
+    // Free device memory IFF we free transients
+    if (free_transients && device_VF_vertices != nullptr)
+        CUDA_WARN(cudaFree(device_VF_vertices));
+    if (free_transients && device_VF_faces != nullptr)
+        CUDA_WARN(cudaFree(device_VF_faces));
+
+    // Return device pointer
+    return fv_computed;
+}
+std::unique_ptr<FV_Data> make_FV_GPU(const VF_Data & VF,
+                                     const vtkIdType n_points,
+                                     const vtkIdType n_faces,
+                                     const bool free_transients,
+                                     const arguments args) {
+    // FV_data = std::vector<FaceData{middleVert,highVert,id}>
+    std::unique_ptr<FV_Data> vertexList = std::make_unique<FV_Data>();
+    vertexList->reserve(n_faces);
+
+    vtkIdType * fv_host = nullptr;
+    size_t fv_size = sizeof(vtkIdType) * n_faces * nbVertsInFace;
+    CUDA_ASSERT(cudaMallocHost((void**)&fv_host, fv_size));
+    // Make GPU FV
+    vtkIdType * fv_computed = make_FV_GPU_return(VF, n_points, n_faces,
+                                                 free_transients, args);
     // Copy back to host and set in vertexList
-    kernel.tick();
+    Timer kernel(false, "FV_GPU");
     CUDA_WARN(cudaMemcpy(fv_host, fv_computed, fv_size, cudaMemcpyDeviceToHost));
     kernel.tick();
     kernel.label_prev_interval("GPU Device->Host transfer");
@@ -772,8 +852,6 @@ std::unique_ptr<FV_Data> make_FV_GPU(const VF_Data & VF,
     kernel.tick();
     kernel.label_prev_interval("GPU Device->Host translation");
     // Free device memory
-    if (vertices_device != nullptr) CUDA_WARN(cudaFree(vertices_device));
-    if (faces_device != nullptr) CUDA_WARN(cudaFree(faces_device));
     if (fv_computed != nullptr) CUDA_WARN(cudaFree(fv_computed));
     // Free host memory
     if (fv_host != nullptr) CUDA_WARN(cudaFreeHost(fv_host));
@@ -781,46 +859,31 @@ std::unique_ptr<FV_Data> make_FV_GPU(const VF_Data & VF,
     return vertexList;
 }
 
-std::unique_ptr<FE_Data> make_FE_GPU(const VF_Data & VF,
-                                     const VE_Data & VE,
-                                     const vtkIdType n_points,
-                                     const vtkIdType n_edges,
-                                     const vtkIdType n_faces,
-                                     const arguments args) {
-    std::unique_ptr<FE_Data> faceToEdges = std::make_unique<FE_Data>();
-    faceToEdges->reserve(n_faces);
-
+vtkIdType * make_FE_GPU_return(const VF_Data & VF,
+                               const VE_Data & VE,
+                               const vtkIdType n_points,
+                               const vtkIdType n_edges,
+                               const vtkIdType n_faces,
+                               const bool free_transients,
+                               const arguments args) {
     // Marshall data to GPU
-    vtkIdType * edges_vertices_device = nullptr,
-              * edges_device = nullptr,
-              * edges_index_device = nullptr,
-              * faces_vertices_device = nullptr,
-              * faces_device = nullptr,
-              * faces_index_device = nullptr;
-    make_VE_for_GPU(&edges_vertices_device,
-                    &edges_device,
-                    &edges_index_device,
-                    VE,
-                    n_points,
-                    n_edges
-            );
-    make_VF_for_GPU(&faces_vertices_device,
-                    &faces_device,
-                    &faces_index_device,
-                    VF,
-                    n_points,
-                    n_faces
-            );
-    // If the {edges,faces}_vertices_device are identical here, we should
+    if (device_VE_vertices == nullptr && device_VE_edges == nullptr &&
+        device_VE_first_vertex == nullptr) {
+        make_VE_for_GPU(VE, n_points, n_edges);
+    }
+    if (device_VF_vertices == nullptr && device_VF_faces == nullptr &&
+        device_VF_first_faces == nullptr) {
+        make_VF_for_GPU(VF, n_points, n_faces);
+    }
+    // If the device_V{E,F}_vertices remain identical here, we could
     // go ahead and free one of them; could do minor optimization to not
-    // create it a second time in VE or VF via a flag to the function
+    // create it a second time in VE or VF via a flag to the function or
+    // partial build
 
     // Compute the relationship
     size_t fe_size = sizeof(vtkIdType) * n_faces * nbEdgesInFace;
-    vtkIdType * fe_computed = nullptr,
-              * fe_host = nullptr;
+    vtkIdType * fe_computed = nullptr;
     CUDA_ASSERT(cudaMalloc((void**)&fe_computed, fe_size));
-    CUDA_ASSERT(cudaMallocHost((void**)&fe_host, fe_size));
     vtkIdType n_to_compute = n_faces * nbEdgesInFace;
     dim3 thread_block_size = 1024,
          grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
@@ -829,15 +892,15 @@ std::unique_ptr<FE_Data> make_FE_GPU(const VF_Data & VF,
               << std::endl;
     std::cout << INFO_EMOJI << "The mesh has " << n_faces << " faces and "
               << n_edges << " edges" << std::endl;
-    Timer kernel;
+    Timer kernel(false, "FE_Kernel");
     /*
     KERNEL_WARN(FE_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
-                            thread_block_size>>>(edges_vertices_device,
-                                edges_device,
-                                edges_index_device,
-                                faces_vertices_device,
-                                faces_device,
-                                faces_index_device,
+                            thread_block_size>>>(device_VE_vertices,
+                                device_VE_edges,
+                                device_VE_first_vertex,
+                                device_VF_vertices,
+                                device_VF_faces,
+                                device_VF_first_faces,
                                 n_edges,
                                 n_faces,
                                 fe_compute));
@@ -845,25 +908,54 @@ std::unique_ptr<FE_Data> make_FE_GPU(const VF_Data & VF,
     CUDA_WARN(cudaDeviceSynchronize());
     kernel.tick();
     kernel.label_prev_interval("GPU kernel duration");
+    // Free device memory IFF we free transients
+    if (free_transients && device_VE_vertices != nullptr)
+        CUDA_WARN(cudaFree(device_VE_vertices));
+    if (free_transients && device_VE_edges != nullptr)
+        CUDA_WARN(cudaFree(device_VE_edges));
+    if (free_transients && device_VE_first_vertex != nullptr)
+        CUDA_WARN(cudaFree(device_VE_first_vertex));
+    if (free_transients && device_VF_vertices != nullptr)
+        CUDA_WARN(cudaFree(device_VF_vertices));
+    if (free_transients && device_VF_faces != nullptr)
+        CUDA_WARN(cudaFree(device_VF_faces));
+    if (free_transients && device_VF_first_faces != nullptr)
+        CUDA_WARN(cudaFree(device_VF_first_faces));
+
+    // Return device pointer
+    return fe_computed;
+}
+std::unique_ptr<FE_Data> make_FE_GPU(const VF_Data & VF,
+                                     const VE_Data & VE,
+                                     const vtkIdType n_points,
+                                     const vtkIdType n_edges,
+                                     const vtkIdType n_faces,
+                                     const bool free_transients,
+                                     const arguments args) {
+    std::unique_ptr<FE_Data> faceToEdges = std::make_unique<FE_Data>();
+    faceToEdges->reserve(n_faces);
+
+    vtkIdType * fe_host = nullptr;
+    size_t fe_size = sizeof(vtkIdType) * n_faces * nbEdgesInFace;
+    CUDA_ASSERT(cudaMallocHost((void**)&fe_host, fe_size));
+    // Make GPU FE
+    vtkIdType * fe_computed = make_FE_GPU_return(VF, VE, n_points, n_edges,
+                                                 n_faces, free_transients, args);
     // Copy back to host and set for validation
-    kernel.tick();
+    Timer kernel(false, "FE_GPU");
     CUDA_WARN(cudaMemcpy(fe_host, fe_computed, fe_size, cudaMemcpyDeviceToHost));
     kernel.tick();
     kernel.label_prev_interval("GPU Device->Host transfer");
 
     // Reconfigure
     kernel.tick();
+    std::cerr << WARN_EMOJI << "No reconfiguration for host!" << std::endl;
     kernel.tick();
     kernel.label_prev_interval("GPU Device->Host translation");
 
     // Free device memory
-    if (edges_vertices_device != nullptr) CUDA_WARN(cudaFree(edges_vertices_device));
-    if (edges_device != nullptr) CUDA_WARN(cudaFree(edges_device));
-    if (edges_index_device != nullptr) CUDA_WARN(cudaFree(edges_index_device));
-    if (faces_vertices_device != nullptr) CUDA_WARN(cudaFree(faces_vertices_device));
-    if (faces_device != nullptr) CUDA_WARN(cudaFree(faces_device));
-    if (faces_index_device != nullptr) CUDA_WARN(cudaFree(faces_index_device));
     if (fe_computed != nullptr) CUDA_WARN(cudaFree(fe_computed));
+    // Free host memory
     if (fe_host != nullptr) CUDA_WARN(cudaFreeHost(fe_host));
 
     return faceToEdges;
@@ -873,6 +965,7 @@ std::unique_ptr<ET_Data> make_ET_GPU(const TV_Data & TV,
                                      const VE_Data & VE,
                                      const vtkIdType n_points,
                                      const vtkIdType n_edges,
+                                     const bool free_transients,
                                      const arguments args) {
     std::unique_ptr<ET_Data> edgeToCell = std::make_unique<ET_Data>();
     edgeToCell->reserve(n_edges);
@@ -992,34 +1085,31 @@ vtkIdType get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points) {
     return max;
 }
 
-std::unique_ptr<VV_Data> make_VV_GPU(const TV_Data & TV,
-                                     const vtkIdType n_cells,
-                                     const vtkIdType n_points,
-                                     const arguments args) {
-    std::unique_ptr<VV_Data> vertex_adjacency = std::make_unique<VV_Data>();
-    vertex_adjacency->resize(n_points); // RESIZE so we can emplace within VV_Data vectors
-
+device_VV * make_VV_GPU_return(const TV_Data & TV,
+                               const vtkIdType n_cells,
+                               const vtkIdType n_points,
+                               const vtkIdType max_VV_guess,
+                               const bool free_transients,
+                               const arguments args) {
     // Marshall data to GPU
-    vtkIdType * tv_device = nullptr;
-    make_TV_for_GPU(&tv_device, TV);
+    if (device_TV == nullptr) make_TV_for_GPU(TV);
 
-    // We kind of need to know the max-adjacency, but don't have to know it
-    // precisely
-    vtkIdType max_VV_guess = get_approx_max_VV(TV, n_points);
     // Compute the relationship
     size_t vv_size = sizeof(vtkIdType) * n_points * max_VV_guess,
            vv_index_size = sizeof(unsigned long long int) * n_points;
-    vtkIdType * vv_computed = nullptr,
-              * vv_host = nullptr;
-    unsigned long long int * vv_index = nullptr,
-                           * vv_index_host = nullptr;
+    vtkIdType * vv_computed = nullptr;
+    unsigned long long int * vv_index = nullptr;
     CUDA_ASSERT(cudaMalloc((void**)&vv_computed, vv_size));
     CUDA_ASSERT(cudaMalloc((void**)&vv_index, vv_index_size));
-    CUDA_ASSERT(cudaMallocHost((void**)&vv_host, vv_size));
-    CUDA_ASSERT(cudaMallocHost((void**)&vv_index_host, vv_index_size));
     // Pre-populate vv_index!
-    for(vtkIdType i = 0; i < n_points; i++) vv_index_host[i] = 0;
-    CUDA_WARN(cudaMemcpy(vv_index, vv_index_host, vv_index_size, cudaMemcpyHostToDevice));
+    {
+        unsigned long long int * vv_index_host = nullptr;
+        CUDA_ASSERT(cudaMallocHost((void**)&vv_index_host, vv_index_size));
+        for(vtkIdType i = 0; i < n_points; i++) vv_index_host[i] = 0;
+        /* BLOCKING COPY */
+        CUDA_WARN(cudaMemcpy(vv_index, vv_index_host, vv_index_size, cudaMemcpyHostToDevice));
+        if (vv_index_host != nullptr) CUDA_WARN(cudaFreeHost(vv_index_host));
+    }
     vtkIdType n_to_compute = n_cells * nbVertsInCell;
     dim3 thread_block_size = 1024,
          grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
@@ -1031,9 +1121,9 @@ std::unique_ptr<VV_Data> make_VV_GPU(const TV_Data & TV,
     std::cout << INFO_EMOJI << "Tids >= " << n_cells * nbVertsInCell
               << " should auto-exit (" << (thread_block_size.x * grid_size.x) - n_to_compute
               << ")" << std::endl;
-    Timer kernel;
+    Timer kernel(false, "VV_Kernel");
     KERNEL_WARN(VV_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
-                            thread_block_size>>>(tv_device,
+                            thread_block_size>>>(device_TV,
                                 n_cells,
                                 n_points,
                                 max_VV_guess,
@@ -1042,9 +1132,36 @@ std::unique_ptr<VV_Data> make_VV_GPU(const TV_Data & TV,
     CUDA_WARN(cudaDeviceSynchronize());
     kernel.tick();
     kernel.label_prev_interval("GPU kernel duration");
-    kernel.tick();
-    CUDA_WARN(cudaMemcpy(vv_host, vv_computed, vv_size, cudaMemcpyDeviceToHost));
-    CUDA_WARN(cudaMemcpy(vv_index_host, vv_index, vv_index_size, cudaMemcpyDeviceToHost));
+    // Free device memory IFF we free transients
+    if (free_transients && device_TV != nullptr)
+        CUDA_WARN(cudaFree(device_TV));
+    // Pack data and return
+    device_VV * vv = new device_VV{vv_computed, vv_index};
+    return vv;
+}
+std::unique_ptr<VV_Data> make_VV_GPU(const TV_Data & TV,
+                                     const vtkIdType n_cells,
+                                     const vtkIdType n_points,
+                                     const bool free_transients,
+                                     const arguments args) {
+    std::unique_ptr<VV_Data> vertex_adjacency = std::make_unique<VV_Data>();
+    vertex_adjacency->resize(n_points); // RESIZE so we can emplace within VV_Data vectors
+
+    // We kind of need to know the max-adjacency, but don't have to know it
+    // precisely
+    vtkIdType max_VV_guess = get_approx_max_VV(TV, n_points);
+
+    size_t vv_size = sizeof(vtkIdType) * n_points * max_VV_guess,
+           vv_index_size = sizeof(unsigned long long int) * n_points;
+    vtkIdType * vv_host = nullptr;
+    unsigned long long int * vv_index_host = nullptr;
+    CUDA_ASSERT(cudaMallocHost((void**)&vv_host, vv_size));
+    CUDA_ASSERT(cudaMallocHost((void**)&vv_index_host, vv_index_size));
+    device_VV * dev_vv = make_VV_GPU_return(TV, n_cells, n_points, max_VV_guess,
+                                            free_transients, args);
+    Timer kernel(false, "VV_GPU");
+    CUDA_WARN(cudaMemcpy(vv_host, dev_vv->computed, vv_size, cudaMemcpyDeviceToHost));
+    CUDA_WARN(cudaMemcpy(vv_index_host, dev_vv->index, vv_index_size, cudaMemcpyDeviceToHost));
     kernel.tick();
     kernel.label_prev_interval("GPU Device->Host transfer");
     kernel.tick();
@@ -1057,11 +1174,12 @@ std::unique_ptr<VV_Data> make_VV_GPU(const TV_Data & TV,
     kernel.tick();
     kernel.label_prev_interval("GPU Device->Host translation");
     // Free device memory
-    if (tv_device != nullptr) CUDA_WARN(cudaFree(tv_device));
-    if (vv_index != nullptr) CUDA_WARN(cudaFree(vv_index));
-    if (vv_computed != nullptr) CUDA_WARN(cudaFree(vv_computed));
+    if (dev_vv->computed != nullptr) CUDA_WARN(cudaFree(dev_vv->computed));
+    if (dev_vv->index != nullptr) CUDA_WARN(cudaFree(dev_vv->index));
+    // Free host memory
     if (vv_host != nullptr) CUDA_WARN(cudaFreeHost(vv_host));
     if (vv_index_host != nullptr) CUDA_WARN(cudaFreeHost(vv_index_host));
+
     return vertex_adjacency;
 }
 

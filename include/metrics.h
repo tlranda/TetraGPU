@@ -6,6 +6,7 @@
 #include <chrono>
 #include <iostream>
 #include <iomanip>
+#include <string>
 
 #include "emoji.h"
 
@@ -27,6 +28,8 @@ class Timer {
         std::vector<ClockReading> timings;
         // Optional mapping of interval indices to strings
         std::map<int,std::string> labels;
+        // Prefix name for outputs
+        std::string timer_name;
         // Tracks what has been printed
         int last_printed = -1;
         // Convenient way to track INTERVALS rather than vector entries,
@@ -35,8 +38,11 @@ class Timer {
     public:
         // Creation / Destruction / Copy
         Timer(void);
-        Timer(bool deferred);
+        Timer(bool deferred, std::string name);
         ~Timer(void);
+
+        // Rename timer
+        void set_timer_name(std::string name);
 
         // Log a timestamp
         void tick(void);
