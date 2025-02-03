@@ -1082,6 +1082,7 @@ vtkIdType get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points) {
             });
     max *= 3; // Connected to 3 unique vertices for each cell present in
     std::cerr << INFO_EMOJI << "Approximated max " YELLOW_COLOR "VV" RESET_COLOR " adjacency: " << max << std::endl;
+    // TODO: Possibly round this UP to a multiple of 32 for threadblock alignment nice-ness
     return max;
 }
 
