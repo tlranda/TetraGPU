@@ -57,7 +57,7 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
     // No work for this point's valence
     if (VV_index[my_1d] <= 0) return;
     // Prefix scan as anti-duplication
-    for (vtkIdType i = my_1d * max_VV_guess; i < my_tid; i++) {
+    for (vtkIdType i = my_1d * max_VV_guess; i < tid; i++) {
         if (VV[i] == my_2d) return;
     }
 
@@ -71,7 +71,7 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
     */
     // Classify yourself as an upper or lower valence neighbor to your 1d point
     // Upper = -1, Lower = 1
-    vtkIdType my_class = (-1) ** (scalar_values[my_2d] > scalar_values[my_1d]);
+    vtkIdType my_class = 1 - ((scalar_values[my_2d] > scalar_values[my_1d])<<1);
     valences[tid] = my_class;
     __syncthreads();
     /*
@@ -85,9 +85,9 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
            number of components!
         -- VV-PARALLEL SYNC REQUIRED --
     */
-    vtkIdType max_my_1d = (my1d * max_VV_guess) + VV_index[my_1d];
+    vtkIdType max_my_1d = (my_1d * max_VV_guess) + VV_index[my_1d];
     bool done = false;
-    for(vtkIdType i = my1d * max_VV_guess; !done && (i < max_my_1d); i++) {
+    for(vtkIdType i = my_1d * max_VV_guess; !done && (i < max_my_1d); i++) {
         if (valences[i] == my_class) {
             // Find yourself in their adjacency to become a shared component
             vtkIdType max_my_2d = VV[i] + VV_index[i / max_VV_guess];
@@ -120,6 +120,10 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
     }
 }
 
+void export_classes(vtkIdType * classes, arguments & args) {
+    std::cout << "Pretending to open file " << args.export_ << std::endl;
+}
+
 int main(int argc, char *argv[]) {
     Timer timer(false, "Main");
     arguments args;
@@ -147,7 +151,7 @@ int main(int argc, char *argv[]) {
     timer.label_next_interval(GREEN_COLOR "TV" RESET_COLOR " from VTK");
     timer.tick();
     // Should utilize VTK API and then de-allocate all of its heap
-    std::unique_ptr<TV_Data> TV = get_TV_from_VTK(args);
+    std::unique_ptr<TV_Data> TV = get_TV_from_VTK(args); // args.filename
     timer.tick_announce();
 
     // Usually VE and VF are also mandatory, but CritPoints does not require
@@ -155,21 +159,13 @@ int main(int argc, char *argv[]) {
 
     // OPTIONAL: VV (yellow) [TV' x TV]
     // REQUIRED for CritPoints
-    #ifdef VALIDATE_GPU
-    // CPU version ONLY required when we are validating results
-    std::cout << PUSHPIN_EMOJI << "Using CPU to compute " YELLOW_COLOR "VV" RESET_COLOR << std::endl;
-    timer.label_next_interval(YELLOW_COLOR "VV" RESET_COLOR " [CPU]");
-    timer.tick();
-    std::unique_ptr<VV_Data> VV = elective_make_VV(*TV, TV->nPoints, args);
-    timer.tick_announce();
-    #endif
     std::cout << PUSHPIN_EMOJI << "Using GPU to compute " YELLOW_COLOR "VV" RESET_COLOR << std::endl;
     timer.label_next_interval(YELLOW_COLOR "VV" RESET_COLOR " [GPU]");
     timer.tick();
     // Have to make a max VV guess
     vtkIdType max_VV_guess = get_approx_max_VV(*TV, TV->nPoints);
     device_VV * dvv = make_VV_GPU_return(*TV, TV->nCells, TV->nPoints,
-                                         max_VV_guess, true, args);
+                                         max_VV_guess, true, args); // Args not used, actually
     timer.tick_announce();
 
     // Critical Points
@@ -184,9 +180,9 @@ int main(int argc, char *argv[]) {
               *scalar_values = nullptr,
               *device_scalar_values = nullptr;
     // #Upper, #Lower, Classification
-    size_t classes_size = sizeof(vtkIdType) * n_points * 3,
+    size_t classes_size = sizeof(vtkIdType) * TV->nPoints * 3,
            // Upper/lower per adjacency
-           valences_size = sizeof(vtkIdType) * n_points * max_VV_guess;
+           valences_size = sizeof(vtkIdType) * TV->nPoints * max_VV_guess;
     // No host answer YET -- critPointsClasses
     CUDA_ASSERT(cudaMallocHost((void**)&host_CPC, classes_size));
     CUDA_ASSERT(cudaMalloc((void**)&device_CPC, valences_size));
@@ -227,16 +223,19 @@ int main(int argc, char *argv[]) {
                                                   device_scalar_values,
                                                   device_CPC));
     timer.tick_announce();
-    #ifdef VALIDATE_GPU
-    timer.label_next_interval("Validate " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm");
+    timer.label_next_interval("Retrieve results from GPU");
     timer.tick();
-    std::cerr << WARN_EMOJI << "No validation for critical points yet!" << std::endl;
+    CUDA_WARN(cudaMemcpy(host_CPC, device_CPC, classes_size, cudaMemcpyDeviceToHost));
+    timer.tick();
+    timer.label_next_interval("Export results from " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm");
+    timer.tick();
+    export_classes(host_CPC, args);
     timer.tick_announce();
-    #endif
     if (host_CPC != nullptr) CUDA_WARN(cudaFreeHost(host_CPC));
     if (device_CPC != nullptr) CUDA_WARN(cudaFree(device_CPC));
     if (device_valences != nullptr) CUDA_WARN(cudaFree(device_valences));
     if (scalar_values != nullptr) CUDA_WARN(cudaFreeHost(scalar_values));
     if (device_scalar_values != nullptr) CUDA_WARN(cudaFree(device_scalar_values));
+    if (dvv != nullptr) free(dvv);
 }
 

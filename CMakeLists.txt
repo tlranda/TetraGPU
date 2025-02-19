@@ -13,7 +13,7 @@ if (NOT VALIDATE_GPU)
     # Remove validate.cpp from file globbing
     list(REMOVE_ITEM sources src/validate.cpp)
 endif (NOT VALIDATE_GPU)
-option(BUILD_CRITICAL_POINTS "Build Critical Points instead of main tester" OFF)
+option(BUILD_CRITICAL_POINTS "Build Critical Points instead of main tester" ON)
 if (BUILD_CRITICAL_POINTS)
     # Remove main.cu from file globbing
     list(REMOVE_ITEM sources ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cu)

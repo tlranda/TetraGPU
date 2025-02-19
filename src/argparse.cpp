@@ -60,7 +60,8 @@ void parse(int argc, char *argv[], arguments& args) {
     // Disable getopt's automatic error messages so we can catch it via '?'
     opterr = 0;
     // Getopt option declarations
-    const char * optionstring = "hi:t:";
+    const char * optionstring = "hi:t:e:"
+    ;
     static struct option long_options[] = {
         {"help", no_argument, 0, 'h'},
         {"input", required_argument, 0, 'i'},
@@ -81,6 +82,7 @@ void parse(int argc, char *argv[], arguments& args) {
         {"build_FF", no_argument, &arg_flags[11], 1},
         {"build_EE", no_argument, &arg_flags[12], 1},
         {"build_VV", no_argument, &arg_flags[13], 1},
+        {"export", optional_argument, 0, 'e'},
         {0,0,0,0}
     };
     const option_map help_info = {
@@ -103,11 +105,12 @@ void parse(int argc, char *argv[], arguments& args) {
         {"build_FF", "Build the FF relationship"},
         {"build_EE", "Build the EE relationship"},
         {"build_VV", "Build the VV relationship"},
+        {"export", "File to export CritPoints classifications to"},
     };
     const option_map metavars = {
         {"input", "input.vtu"},
+        {"export", "classes.txt"},
     };
-    std::string help = usage(argv[0], long_options, args, help_info, metavars);
     std::stringstream errors;
 
     // Begin parsing
@@ -132,12 +135,19 @@ void parse(int argc, char *argv[], arguments& args) {
                     bad_args += 1;
                 }
                 break;
+            case 'e':
+                args.export_ = std::string(optarg);
             case '?':
                 errors << WARN_EMOJI << "Unrecognized argument: "
                        << argv[optind-1] << std::endl;
                 bad_args += 1;
                 break;
             case 'h':
+                std::string help = usage(argv[0],
+                                         long_options,
+                                         args,
+                                         help_info,
+                                         metavars);
                 std::cout << help;
                 exit(EXIT_SUCCESS);
         }
@@ -154,7 +164,7 @@ void parse(int argc, char *argv[], arguments& args) {
     }
     std::cout << INFO_EMOJI << "CPU threads: " << args.threadNumber
               << std::endl;
-
+    std::cout << INFO_EMOJI << "Export: " << args.export_ << std::endl;
     // Set bit flags
     c = 0;
     for (int bit_value : arg_flags) {
