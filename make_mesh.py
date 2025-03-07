@@ -1,16 +1,18 @@
-import argparse
-from itertools import product
-import pathlib
-import subprocess
 # Dependent modules
 import meshio
 import numpy as np
 import tqdm
+# Builtin modules
+import argparse
+from itertools import product
+import pathlib
+import subprocess
 
 def build():
     prs = argparse.ArgumentParser()
     prs.add_argument('--n-points', type=int, default=5, help="Number of points in the mesh (each point beyond 4th adds +1 tetra) (Default: %(default)s)")
     prs.add_argument('--output', type=pathlib.Path, default='generated', help="Output VTU file for the mesh (Default: %(default)s)")
+    prs.add_argument('--seed', type=int, default=1234, help="Numpy random seed (Default: %(default)s)")
     return prs
 
 def parse(args=None, prs=None):
@@ -21,6 +23,7 @@ def parse(args=None, prs=None):
     if args.n_points < 4:
         raise ValueError("Must define at least 4 points")
     args.output = pathlib.Path(args.output).with_suffix('.vtu')
+    np.random.seed(args.seed)
     return args
 
 def make_3d_points(n_points):
@@ -63,13 +66,18 @@ def main():
     points = make_3d_points(args.n_points)
     tetras = make_tetras(args.n_points)
 
+    scalar_field = np.random.rand(args.n_points)
+
     # Use Meshio to write in VTK's VTU format -- but use ASCII instead of binary
     # Technically I think you should be able to not use the subprocess below
     # but I am unsure of how to get their API to cooperate -- this works but
     # is probably a bit redundant and may slow down processing for some larger
     # meshes
-    meshio.write_points_cells(args.output, points, tetras)
+    meshio.write_points_cells(args.output, points, tetras, point_data={"scalar_field": scalar_field})
     subprocess.run(['meshio', 'ascii', str(args.output)])
+    # Unfortunately I don't see how to get this right initially, so we have to
+    # fix the scalar ID on the point data after it gets exported
+    subprocess.run(['sed', '-i', '-e', 's/<PointData>/<PointData Scalars="scalar_field">/', str(args.output)])
 
 if __name__ == '__main__':
     main()
