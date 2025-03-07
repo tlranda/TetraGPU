@@ -9,7 +9,8 @@
 # VTK_DIR := Help CMake find the VTK install directory
 # CUDA_DIR := Help CMake find the CUDA install directory
 # TETRA_CMAKE_ARGS := Additional arguments to CMake (ie: -DCMAKE_CUDA_HOST_COMPILER, -DCMake_CXX_COMPILER)
-# EXE := The main driver to use
+# EXE := The filename used for binary export
+# MAIN := The main driver file to use
 
 validate="${VALIDATE-0}";
 echo "validate='${validate}'";
@@ -22,7 +23,9 @@ echo "CUDA_DIR='${cuda_dir}'";
 cmake_args="${TETRA_CMAKE_ARGS-0}";
 echo "cmake_args='${cmake_args}'";
 exe="${EXE-0}";
-echo "exe_target='${exe}'";
+echo "exe='${exe}'";
+main="${MAIN-0}";
+echo "main='${main}'";
 
 if [ $# -eq 0 ]; then
     set -- "${@:1}" "Bucket.vtu";
@@ -61,11 +64,20 @@ fi
 if [[ "${debug}" != "0" ]]; then
     cmake_command="${cmake_command} -DCMAKE_BUILD_TYPE=\"Debug\"";
 fi
-if [[ "${exe}" != "0" ]]; then
-    cmake_command="${cmake_command} -DBUILD_${exe}=ON";
-else
+if [[ "${exe}" == "0" ]]; then
     exe="main";
 fi
+cmake_command="${cmake_command} -DCMAKE_OUTPUT_NAME=\"${exe}\"";
+if [[ "${main}" != "0" ]]; then
+    lines=$(diff src/main.cu ${main} | wc -l);
+    if [[ ${lines} -ne 0 ]]; then
+        echo "Updating main file";
+        cp ${main} src/main.cu;
+    else
+        echo "Main file up-to-date";
+    fi
+fi
+
 echo $cmake_command;
 eval $cmake_command;
 if [ $? -ne 0 ]; then
