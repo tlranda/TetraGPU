@@ -4,6 +4,7 @@
 // VTK library requirements
 #include <vtkUnstructuredGrid.h>
 #include <vtkXMLUnstructuredGridReader.h>
+#include <vtkPointData.h>
 // Arguments
 #include "argparse.h"
 #include "datatypes.h"

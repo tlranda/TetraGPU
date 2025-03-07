@@ -354,6 +354,16 @@ int main(int argc, char *argv[]) {
         #endif
     }
 
+    // Check the VTK data!
+    timer.label_next_interval(CYAN_COLOR "VTK test" RESET_COLOR " [CPU]");
+    timer.tick();
+    double sum = 0.0;
+    for (vtkIdType i = 0; i < TV->nPoints; i++) {
+        sum += TV->vertexAttributes[i];
+    }
+    std::cout << "Attribute sum: " << sum << std::endl;
+    timer.tick_announce();
+
     timer.tick(); // bonus tick -- open interval to demonstrate behavior!
 
     return 0;

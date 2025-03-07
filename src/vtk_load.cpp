@@ -128,6 +128,25 @@ std::unique_ptr<TV_Data> get_TV_from_VTK(const arguments args) {
         }
     }
 
+    // Retrieve vertex attributes
+    vtkPointData* pd = unstructuredGrid->GetPointData();
+    if (!pd) {
+        std::cerr << EXCLAIM_EMOJI << "Unable to retrieve point data from the dataset" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+    std::cout << "Has " << pd->GetNumberOfArrays() << " arrays" << std::endl;
+    for (int i = 0; i < pd->GetNumberOfArrays(); i++) {
+        std::cout << "\tArray " << i << " is named " << (pd->GetArrayName(i) ? pd->GetArrayName(i) : "NULL (not specified)") << std::endl;
+    }
+    vtkDataArray* vertexAttributes = pd->GetScalars();
+    if (!vertexAttributes) {
+        std::cerr << EXCLAIM_EMOJI << "No vertex attributes found in the dataset" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+    std::vector<double> vertexAttributeValues(nPoints);
+    for (vtkIdType i = 0; i < nPoints; i++) vertexAttributeValues[i] = vertexAttributes->GetTuple1(i);
+    data->vertexAttributes = std::move(vertexAttributeValues);
+
     return data;
 }
 
