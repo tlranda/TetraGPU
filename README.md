@@ -36,10 +36,19 @@ requiring specific versions; however they are tested against:
         * Numpy Version 1.23.0
         * Meshio Version 5.3.5
         * TQDM Version 4.62.3
+* To make dataset replication as simple as possible, you should be able to
+recreate the datasets by running `./artificial_dataset.sh`, which will drive
+the Python script on your behalf. This process will take a few minutes -- we
+note that TQDM's time-to-completion estimate is overly optimistic on the final
+dataset due to the nonlinear time complexity of the timed loop.
 
 ### Building, Running, Debugging
 * All builds can be managed directly by CMake, but for my own convenience I
 use the included `test.sh` script. You may use it as well:
+    * The environment variable "MAIN" must be set to a driver (.cu file under
+the src/alg directory) if you have not run the script before. This ensures
+multiple drivers can be swapped in and out transparently for development and
+may change in the future.
     * The script always builds/updates the repository source via CMake
     * If you set/export a nonempty value for `RUNTIME_ARGS`, the string will be
 forwarded to `test.sh`'s executions of the program as additional arguments.
@@ -58,48 +67,68 @@ the program and launch CUDA-GDB instead of directly executing the program.
 
 Example usage may look like this:
 ```/bin/bash
-$ ./test.sh;
+$ MAIN=src/alg/test_driver.cu ./test.sh;
 validate='0'
 debug='0'
 VTK_DIR='/home/tlranda/tools/VTK/VTK-9.3.1/build_gcc7'
 CUDA_DIR='/usr/local/cuda-12.2'
-cmake_args='0'
-VTK_DIR=/home/tlranda/tools/VTK/VTK-9.3.1/build_gcc7 CUDA_DIR=/usr/local/cuda-12.2 cmake -B build_n01 -DCMAKE_BUILD_TYPE=Release
+cmake_args='-DCMAKE_CUDA_HOST_COMPILER=/home/tlranda/tools/gcc7/bin/g++ -DCMAKE_CXX_COMPILER=/home/tlranda/tools/gcc7/bin/g++'
+exe='0'
+main='src/alg/test_driver.cu'
+Main file up-to-date
+VTK_DIR=/home/tlranda/tools/VTK/VTK-9.3.1/build_gcc7 CUDA_DIR=/usr/local/cuda-12.2 cmake -B build_n01 -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_HOST_COMPILER=/home/tlranda/tools/gcc7/bin/g++ -DCMAKE_CXX_COMPILER=/home/tlranda/tools/gcc7/bin/g++ -DCMAKE_OUTPUT_NAME="main"
 -- CMAKE OUTPUT LARGELY OMITTED, MAY VARY BASED ON PRIOR BUILD STATUS --
 -- Adding custom NVIDIA setup for n01
 -- VTK_VERSION: 9.3.1
-VTK_DIR: /home/tlranda/tools/VTK/VTK-9.3.1/build_gcc7
-Adjusting host flags to O3 for release build...
--- Configuring done (0.4s)
--- Generating done (0.1s)
--- Build files have been written to: /home/tlranda/TetraGPU/build_n01
 [100%] Built target main
 time ./build_n01/main --input Bucket.vtu -t 24  
 ℹ️  Dataset: Bucket.vtu
 ℹ️  CPU threads: 24
+ℹ️  Export: 
 ℹ️  Bit flag [1: TE]: false
 ℹ️  Bit flag [2: EV]: false
 ℹ️  Bit flag [3: ET]: false
 ℹ️  Bit flag [4: TF]: false
 ℹ️  Bit flag [5: FV]: false
 ℹ️  Bit flag [6: FE]: false
-⏳ Argument parsing: 0.000107
-⏳ GPU context creation with dummy kernel: 0.255451
-⏳ GPU trivial kernel launch: 0.000010
+ℹ️  Bit flag [7: FT]: false
+ℹ️  Bit flag [8: EF]: false
+ℹ️  Bit flag [9: VT]: false
+ℹ️  Bit flag [10: TT]: false
+ℹ️  Bit flag [11: FF]: false
+ℹ️  Bit flag [12: EE]: false
+ℹ️  Bit flag [13: VV]: true
+⏳ Argument parsing: 0.000199
 📍 Parsing vtu file: Bucket.vtu
 🆗 Dataset loaded with 84156 tetrahedra and 19917 vertices
-⏳ TV from VTK: 0.035009
+Has 1 arrays
+	Array 0 is named Result
+⏳ TV from VTK: 0.119694
 📍 Building edges...
-⏳ VE [CPU]: 0.022587
+⏳ VE [CPU]: 0.036659
 🆗 Built 114520 edges.
 📍 Building faces...
-⏳ VF [CPU]: 0.029375
+⏳ VF [CPU]: 0.032882
 🆗 Built 178760 faces.
-❗ Open interval 6 cannot report time until it is closed by another tick()
+📍 Using CPU to compute VV
+ℹ️  Longest vertex adjacency: 28
+⏳ VV [CPU]: 0.045196
+📍 Using GPU to compute VV
+ℹ️  Approximated max VV adjacency: 153
+ℹ️  Kernel launch configuration is 329 grid blocks with 1024 threads per block
+ℹ️  The mesh has 84156 cells and 19917 vertices
+ℹ️  Tids >= 336624 should auto-exit (272)
+⏳ GPU kernel duration: 0.008258
+⏳ GPU Device->Host transfer: 0.003743
+⏳ GPU Device->Host translation: 0.008375
+⏳ VV [GPU]: 0.288844
+Attribute sum: 1.45217e+06
+⏳ VTK test [CPU]: 0.000050
+❗ Timer[Main] Open interval 7 cannot report time until it is closed by another tick()
 
-real	0m0.426s
-user	0m0.111s
-sys	0m0.284s
+real	0m1.052s
+user	0m0.223s
+sys	0m0.331s
 ```
 
 ## Current State of the Repository:
