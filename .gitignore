@@ -36,3 +36,7 @@
 
 # Build directories
 build_*/
+
+# Don't track the shifting main file
+src/main.cu
+
