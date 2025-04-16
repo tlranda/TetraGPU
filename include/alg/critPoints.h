@@ -20,9 +20,9 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
                            const vtkIdType points,
                            const vtkIdType max_VV_guess,
                            const double * __restrict__ scalar_values,
-                           vtkIdType * __restrict__ classes);
+                           unsigned int * __restrict__ classes);
 
-void export_classes(vtkIdType * classes,
+void export_classes(unsigned int * classes,
                     vtkIdType n_classes,
                     arguments & args);
 

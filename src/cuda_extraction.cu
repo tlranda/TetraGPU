@@ -1107,7 +1107,7 @@ device_VV * make_VV_GPU_return(const TV_Data & TV,
         unsigned long long int * vv_index_host = nullptr;
         CUDA_ASSERT(cudaMallocHost((void**)&vv_index_host, vv_index_size));
         for(vtkIdType i = 0; i < n_points; i++) vv_index_host[i] = 0;
-        /* BLOCKING COPY */
+        /* BLOCKING COPY -- So we can free the host side data safely */
         CUDA_WARN(cudaMemcpy(vv_index, vv_index_host, vv_index_size, cudaMemcpyHostToDevice));
         if (vv_index_host != nullptr) CUDA_WARN(cudaFreeHost(vv_index_host));
     }

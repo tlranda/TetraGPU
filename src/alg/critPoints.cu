@@ -43,7 +43,7 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
                            const vtkIdType points,
                            const vtkIdType max_VV_guess,
                            const double * __restrict__ scalar_values,
-                           vtkIdType * __restrict__ classes) {
+                           unsigned int * __restrict__ classes) {
     vtkIdType tid = (blockDim.x * blockIdx.x) + threadIdx.x;
     /*
         1) Parallelize VV on second-dimension (can early-exit block if no data
@@ -71,7 +71,8 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
     */
     // Classify yourself as an upper or lower valence neighbor to your 1d point
     // Upper = -1, Lower = 1
-    vtkIdType my_class = 1 - ((scalar_values[my_2d] > scalar_values[my_1d])<<1);
+    //vtkIdType my_class = 1 - ((scalar_values[my_2d] >= scalar_values[my_1d])<<1);
+    vtkIdType my_class = 1 - ((scalar_values[my_2d] < scalar_values[my_1d])<<1);
     valences[tid] = my_class;
     __syncthreads();
     /*
@@ -96,7 +97,11 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
                     // Shared component!
                     // Upper == -1, (-1+1)/2 => 0
                     // Lower ==  1, (1+1)/2  => 1
-                    classes[(my_1d*3) + ((my_class+1)/2)] += 1;
+                    // --no atomic for vtkIdType-- atomicAdd(classes[(my_1d*3) + ((my_class+1)/2)],1);
+                    // best match: unsigned long long int
+                    // other matches: unsigned int, int
+                    //classes[(my_1d*3) + ((my_class+1)/2)] += 1;
+                    atomicAdd(classes+((my_1d*3) + ((my_class+1)/2)), 1);
                     // Break all loops
                     done = true;
                 }
@@ -120,7 +125,7 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
     }
 }
 
-void export_classes(vtkIdType * classes, vtkIdType n_classes, arguments & args) {
+void export_classes(unsigned int * classes, vtkIdType n_classes, arguments & args) {
     std::ofstream output_fstream; // Used for file handle to indicated name
     std::streambuf * output_buffer; // Buffer may point to stdout or file handle
     if (args.export_ == "") {
@@ -138,9 +143,37 @@ void export_classes(vtkIdType * classes, vtkIdType n_classes, arguments & args) 
     }
     // Used for actual file handling
     std::ostream out(output_buffer);
+    std::string class_names[] = {"NULL", "max", "min", "regular", "saddle"};
+    vtkIdType n_insane = 0;
     for (vtkIdType i = 0; i < n_classes; i++) {
-        out << "Class " << i << " = " << classes[i] << std::endl;
+        // The classification information is provided, then the class:
+        // {# upper, # lower, class}
+        // CLASSES = {'maximum': 1, 'minimum': 2, 'regular': 3, 'saddle': 4}
+        unsigned int my_class = classes[(i*3)+2],
+                     n_upper  = classes[(i*3)],
+                     n_lower  = classes[(i*3)+1];
+        // Misclassification sanity checks
+        if ((n_lower == 0 && n_upper == 1 && my_class != 1) ||
+            (n_lower == 1 && n_upper == 0 && my_class != 2) ||
+            (n_lower == 1 && n_upper == 1 && my_class != 3) ||
+            (n_lower != 1 && n_upper != 1 && my_class != 4)) {
+            out << "INSANITY DETECTED FOR POINT " << i << std::endl;
+            n_insane++;
+        }
+        out << "Class " << i << " = " << my_class << std::endl;
+        //out << "Class " << i << " = " << class_names[my_class] << std::endl;
     }
+    if (n_insane > 0) {
+        std::cerr << WARN_EMOJI << RED_COLOR << "Insanity detected; "
+                     "GPU did not agree on its own answers for " << n_insane
+                  << " points." << RESET_COLOR << std::endl;
+    }
+    #ifdef VALIDATE_GPU
+    else {
+        std::cerr << OK_EMOJI << "No insanity detected in GPU self-agreement "
+                     "when classifying points." << std::endl;
+    }
+    #endif
 }
 
 int main(int argc, char *argv[]) {
@@ -192,20 +225,18 @@ int main(int argc, char *argv[]) {
     // Critical Points
     timer.label_next_interval("Allocate " CYAN_COLOR "Critical Points" RESET_COLOR " memory");
     timer.tick();
-    // CPC / critPointsClasses = actual critical points classifications
+    // CPC = actual critical points classifications
     // valences = adjacency upper/lower classification PRIOR to point classification
-    vtkIdType *critPointsClasses = nullptr,
-              *host_CPC = nullptr,
-              *device_CPC = nullptr,
-              *device_valences = nullptr,
+    unsigned int *host_CPC = nullptr,
+                 *device_CPC = nullptr;
+    vtkIdType *device_valences = nullptr,
               *scalar_values = nullptr;
     double    *device_scalar_values = nullptr;
     // #Upper, #Lower, Classification
-    size_t classes_size = sizeof(vtkIdType) * TV->nPoints * 3,
+    size_t classes_size = sizeof(unsigned int) * TV->nPoints * 3,
            // Upper/lower per adjacency
            valences_size = sizeof(vtkIdType) * TV->nPoints * max_VV_guess,
            scalars_size = sizeof(double) * TV->nPoints;
-    // No host answer YET -- critPointsClasses
     CUDA_ASSERT(cudaMallocHost((void**)&host_CPC, classes_size));
     CUDA_ASSERT(cudaMalloc((void**)&device_CPC, classes_size));
     CUDA_ASSERT(cudaMalloc((void**)&device_valences, valences_size));
@@ -254,7 +285,7 @@ int main(int argc, char *argv[]) {
     timer.tick();
     timer.label_next_interval("Export results from " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm");
     timer.tick();
-    export_classes(host_CPC, TV->nPoints * 3, args);
+    export_classes(host_CPC, TV->nPoints, args);
     timer.tick_announce();
     if (host_CPC != nullptr) CUDA_WARN(cudaFreeHost(host_CPC));
     if (device_CPC != nullptr) CUDA_WARN(cudaFree(device_CPC));
