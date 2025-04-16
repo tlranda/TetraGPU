@@ -15,12 +15,16 @@
 #endif
 
 __global__ void critPoints(const vtkIdType * __restrict__ VV,
-                           const vtkIdType * __restrict__ VV_index,
+                           const unsigned long long * __restrict__ VV_index,
                            vtkIdType * __restrict__ valences,
                            const vtkIdType points,
                            const vtkIdType max_VV_guess,
-                           const vtkIdType * __restrict__ scalar_values,
+                           const double * __restrict__ scalar_values,
                            vtkIdType * __restrict__ classes);
+
+void export_classes(vtkIdType * classes,
+                    vtkIdType n_classes,
+                    arguments & args);
 
 #endif
 

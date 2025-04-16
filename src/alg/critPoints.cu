@@ -38,11 +38,11 @@ __global__ void dummy_kernel(void) {
            or lower components is a saddle; other values are regular.
 */
 __global__ void critPoints(const vtkIdType * __restrict__ VV,
-                           const vtkIdType * __restrict__ VV_index,
+                           const unsigned long long * __restrict__ VV_index,
                            vtkIdType * __restrict__ valences,
                            const vtkIdType points,
                            const vtkIdType max_VV_guess,
-                           const vtkIdType * __restrict__ scalar_values,
+                           const double * __restrict__ scalar_values,
                            vtkIdType * __restrict__ classes) {
     vtkIdType tid = (blockDim.x * blockIdx.x) + threadIdx.x;
     /*
@@ -120,8 +120,27 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
     }
 }
 
-void export_classes(vtkIdType * classes, arguments & args) {
-    std::cout << "Pretending to open file " << args.export_ << std::endl;
+void export_classes(vtkIdType * classes, vtkIdType n_classes, arguments & args) {
+    std::ofstream output_fstream; // Used for file handle to indicated name
+    std::streambuf * output_buffer; // Buffer may point to stdout or file handle
+    if (args.export_ == "") {
+        // No export provided by user, write to stdout
+        output_buffer = std::cout.rdbuf();
+        std::cerr << WARN_EMOJI << YELLOW_COLOR << "No export file; outputting "
+                  "classes to stdout" << RESET_COLOR << std::endl;
+    }
+    else {
+        // Put results in the indicated file
+        output_fstream.open(args.export_);
+        output_buffer = output_fstream.rdbuf();
+        std::cerr << INFO_EMOJI << "Outputting classes to " << args.export_
+                                << std::endl;
+    }
+    // Used for actual file handling
+    std::ostream out(output_buffer);
+    for (vtkIdType i = 0; i < n_classes; i++) {
+        out << "Class " << i << " = " << classes[i] << std::endl;
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -151,6 +170,8 @@ int main(int argc, char *argv[]) {
     timer.label_next_interval(GREEN_COLOR "TV" RESET_COLOR " from VTK");
     timer.tick();
     // Should utilize VTK API and then de-allocate all of its heap
+    // Also loads the vertex attributes (host-side) and sets them in
+    // TV->vertexAttributes (one scalar per vertex)
     std::unique_ptr<TV_Data> TV = get_TV_from_VTK(args); // args.filename
     timer.tick_announce();
 
@@ -177,18 +198,19 @@ int main(int argc, char *argv[]) {
               *host_CPC = nullptr,
               *device_CPC = nullptr,
               *device_valences = nullptr,
-              *scalar_values = nullptr,
-              *device_scalar_values = nullptr;
+              *scalar_values = nullptr;
+    double    *device_scalar_values = nullptr;
     // #Upper, #Lower, Classification
     size_t classes_size = sizeof(vtkIdType) * TV->nPoints * 3,
            // Upper/lower per adjacency
-           valences_size = sizeof(vtkIdType) * TV->nPoints * max_VV_guess;
+           valences_size = sizeof(vtkIdType) * TV->nPoints * max_VV_guess,
+           scalars_size = sizeof(double) * TV->nPoints;
     // No host answer YET -- critPointsClasses
     CUDA_ASSERT(cudaMallocHost((void**)&host_CPC, classes_size));
-    CUDA_ASSERT(cudaMalloc((void**)&device_CPC, valences_size));
+    CUDA_ASSERT(cudaMalloc((void**)&device_CPC, classes_size));
     CUDA_ASSERT(cudaMalloc((void**)&device_valences, valences_size));
-    CUDA_ASSERT(cudaMallocHost((void**)&scalar_values, scalar_value_size));
-    CUDA_ASSERT(cudaMalloc((void**)&device_scalar_values, scalar_value_size));
+    CUDA_ASSERT(cudaMallocHost((void**)&scalar_values, scalars_size));
+    CUDA_ASSERT(cudaMalloc((void**)&device_scalar_values, scalars_size));
     // Pre-populate valences as zeros and populate scalar values
     {
         vtkIdType * valences = nullptr;
@@ -199,8 +221,11 @@ int main(int argc, char *argv[]) {
         CUDA_WARN(cudaMemcpy(device_valences, valences, valences_size, cudaMemcpyHostToDevice));
         if (valences != nullptr) CUDA_WARN(cudaFreeHost(valences));
 
-        // Scalar values
-        CUDA_WARN(cudaMemcpy(device_scalar_values, scalar_values, scalar_value_size, cudaMemcpyHostToDevice));
+        // Scalar values from VTK
+        for(vtkIdType i = 0; i < TV->nPoints; i++) {
+            scalar_values[i] = TV->vertexAttributes[i];
+        }
+        CUDA_WARN(cudaMemcpy(device_scalar_values, scalar_values, scalars_size, cudaMemcpyHostToDevice));
     }
     timer.tick_announce();
     timer.label_next_interval("Run " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm");
@@ -229,7 +254,7 @@ int main(int argc, char *argv[]) {
     timer.tick();
     timer.label_next_interval("Export results from " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm");
     timer.tick();
-    export_classes(host_CPC, args);
+    export_classes(host_CPC, TV->nPoints * 3, args);
     timer.tick_announce();
     if (host_CPC != nullptr) CUDA_WARN(cudaFreeHost(host_CPC));
     if (device_CPC != nullptr) CUDA_WARN(cudaFree(device_CPC));

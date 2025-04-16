@@ -66,6 +66,7 @@ void parse(int argc, char *argv[], arguments& args) {
         {"help", no_argument, 0, 'h'},
         {"input", required_argument, 0, 'i'},
         {"threads", required_argument, 0, 't'},
+        {"export", required_argument, 0, 'e'},
         #ifdef VALIDATE_GPU
         {"validate", no_argument, &arg_flags[0], 1},
         #endif
@@ -82,13 +83,13 @@ void parse(int argc, char *argv[], arguments& args) {
         {"build_FF", no_argument, &arg_flags[11], 1},
         {"build_EE", no_argument, &arg_flags[12], 1},
         {"build_VV", no_argument, &arg_flags[13], 1},
-        {"export", optional_argument, 0, 'e'},
         {0,0,0,0}
     };
     const option_map help_info = {
         {"help", "Print this help message and exit"},
         {"input", "Tetrahedral mesh input (.vtu only)"},
         {"threads", "CPU thread limit for parallelism"},
+        {"export", "File to export CritPoints classifications to"},
         #ifdef VALIDATE_GPU
         {"validate", "Check GPU results using CPU"},
         #endif
@@ -105,7 +106,6 @@ void parse(int argc, char *argv[], arguments& args) {
         {"build_FF", "Build the FF relationship"},
         {"build_EE", "Build the EE relationship"},
         {"build_VV", "Build the VV relationship"},
-        {"export", "File to export CritPoints classifications to"},
     };
     const option_map metavars = {
         {"input", "input.vtu"},
@@ -137,6 +137,7 @@ void parse(int argc, char *argv[], arguments& args) {
                 break;
             case 'e':
                 args.export_ = std::string(optarg);
+                break;
             case '?':
                 errors << WARN_EMOJI << "Unrecognized argument: "
                        << argv[optind-1] << std::endl;
@@ -164,7 +165,9 @@ void parse(int argc, char *argv[], arguments& args) {
     }
     std::cout << INFO_EMOJI << "CPU threads: " << args.threadNumber
               << std::endl;
-    std::cout << INFO_EMOJI << "Export: " << args.export_ << std::endl;
+    std::cout << INFO_EMOJI << "Export: " << (args.export_ == "" ?
+                                              "[n/a]" :
+                                              args.export_) << std::endl;
     // Set bit flags
     c = 0;
     for (int bit_value : arg_flags) {
