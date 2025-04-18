@@ -13,6 +13,8 @@ def build():
     prs.add_argument('--n-points', type=int, default=5, help="Number of points in the mesh (each point beyond 4th adds +1 tetra) (Default: %(default)s)")
     prs.add_argument('--output', type=pathlib.Path, default='generated', help="Output VTU file for the mesh (Default: %(default)s)")
     prs.add_argument('--seed', type=int, default=1234, help="Numpy random seed (Default: %(default)s)")
+    prs.add_argument('--display', action='store_true', help="Show generated points/connectivity (Default: %(default)s)")
+    prs.add_argument('--no-export', action='store_true', help="Don't write to a file (Default: %(default)s)")
     return prs
 
 def parse(args=None, prs=None):
@@ -26,15 +28,17 @@ def parse(args=None, prs=None):
     np.random.seed(args.seed)
     return args
 
-def make_3d_points(n_points):
+def make_3d_points(n_points, display=False):
     # Gives unique X-Y-Z combination of values in increments of 1.0 while
     # rotating through axes X->Z ish
     nrange = np.ceil(np.power(n_points,1/3)).astype(int)
     points = sorted(list(product(*([range(nrange)]*3)))[:n_points],
                     key=lambda x: (sum(x),x[2],x[1],x[0]))
+    if display:
+        print("Points:", points)
     return points
 
-def make_tetras(n_points):
+def make_tetras(n_points, display=False):
     # First tetra is just the first four points and defines 4 connectable faces
     # to start us out
     tetras = [[0,1,2,3]]
@@ -56,6 +60,8 @@ def make_tetras(n_points):
                      tuple(sorted([reused_face[1],reused_face[2], new_point])),
                      tuple(sorted([reused_face[0],reused_face[2], new_point])),}
         available_faces = available_faces.union(new_faces)
+    if display:
+        print("Connectivity:", tetras)
     # Return in meshio format
     return [('tetra', tetras)]
 
@@ -63,10 +69,15 @@ def make_tetras(n_points):
 def main():
     args = parse()
 
-    points = make_3d_points(args.n_points)
-    tetras = make_tetras(args.n_points)
+    points = make_3d_points(args.n_points, display=args.display)
+    tetras = make_tetras(args.n_points, display=args.display)
 
     scalar_field = np.random.rand(args.n_points)
+    if args.display:
+        print("Scalars:", scalar_field)
+
+    if args.no_export:
+        return
 
     # Use Meshio to write in VTK's VTU format -- but use ASCII instead of binary
     # Technically I think you should be able to not use the subprocess below
@@ -78,6 +89,8 @@ def main():
     # Unfortunately I don't see how to get this right initially, so we have to
     # fix the scalar ID on the point data after it gets exported
     subprocess.run(['sed', '-i', '-e', 's/<PointData>/<PointData Scalars="scalar_field">/', str(args.output)])
+    # Fix the datatype so TTK works with it in Paraview
+    subprocess.run(['sed', '-i', '-e', 's/Int64/Float64/', str(args.output)])
 
 if __name__ == '__main__':
     main()

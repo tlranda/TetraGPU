@@ -1077,12 +1077,14 @@ vtkIdType get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points) {
             [&](const std::array<vtkIdType,nbVertsInCell>& cell) {
                 for (const vtkIdType vertex : cell) {
                     // Max can never be off by more than one so just increment it
-                    if (appears[vertex]++ > max) max++;
+                    if (++appears[vertex] > max) max++;
                 }
             });
     max *= 3; // Connected to 3 unique vertices for each cell present in
-    std::cerr << INFO_EMOJI << "Approximated max " YELLOW_COLOR "VV" RESET_COLOR " adjacency: " << max << std::endl;
+    // Minimum warp width for help with consistency
     // TODO: Possibly round this UP to a multiple of 32 for threadblock alignment nice-ness
+    max = ((max+31)/32)*32;
+    std::cerr << INFO_EMOJI << "Approximated max " YELLOW_COLOR "VV" RESET_COLOR " adjacency: " << max << std::endl;
     return max;
 }
 
@@ -1102,6 +1104,15 @@ device_VV * make_VV_GPU_return(const TV_Data & TV,
     unsigned long long int * vv_index = nullptr;
     CUDA_ASSERT(cudaMalloc((void**)&vv_computed, vv_size));
     CUDA_ASSERT(cudaMalloc((void**)&vv_index, vv_index_size));
+    // Pre-populate vv!
+    {
+        vtkIdType * vv_host = nullptr;
+        CUDA_ASSERT(cudaMallocHost((void**)&vv_host, vv_size));
+        for(vtkIdType i=0; i < n_points*max_VV_guess; i++) vv_host[i] = -1;
+        /* BLOCKING COPY -- So we can free the host side data safely */
+        CUDA_WARN(cudaMemcpy(vv_computed, vv_host, vv_size, cudaMemcpyHostToDevice));
+        if (vv_host != nullptr) CUDA_WARN(cudaFreeHost(vv_host));
+    }
     // Pre-populate vv_index!
     {
         unsigned long long int * vv_index_host = nullptr;
