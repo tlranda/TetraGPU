@@ -160,8 +160,8 @@ __global__ void critPointsA(const vtkIdType * __restrict__ VV,
     //vtkIdType my_class = 1 - ((scalar_values[my_2d] (>= / <) scalar_values[my_1d])<<1);
     const vtkIdType my_class = 1 - ((scalar_values[my_2d] >= scalar_values[my_1d])<<1);
     valences[tid] = my_class;
-    printf("Block %d Thread %02d A valence (%lld,%lld) is %lld\n", blockIdx.x, threadIdx.x, my_1d, my_2d, my_class);
-    __syncthreads();
+    //printf("Block %d Thread %02d A valence (%lld,%lld) is %lld\n", blockIdx.x, threadIdx.x, my_1d, my_2d, my_class);
+    //__syncthreads();
 }
 
 __global__ void critPointsB(const vtkIdType * __restrict__ VV,
@@ -187,7 +187,7 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
         if (VV[i] == my_2d) return;
         //{ printf("Block %d Thread %02d early exit: %s %d\n", blockIdx.x, threadIdx.x, "Prefix duplicate found @ index", i-(my_1d*max_VV_guess)); return; }
     }
-    printf("Block %d Thread %02d B init on my_1d %lld and my_2d %lld\n", blockIdx.x, threadIdx.x, my_1d, my_2d);
+    //printf("Block %d Thread %02d B init on my_1d %lld and my_2d %lld\n", blockIdx.x, threadIdx.x, my_1d, my_2d);
 
     // BEYOND THIS POINT, YOU ARE AN ACTUAL WORKER THREAD ON THE PROBLEM
     // Which way should the tiebreaker go here?
@@ -211,8 +211,8 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
     for(vtkIdType i = my_1d * max_VV_guess; !done && (i < max_my_1d); i++) {
         // Found same valence connected to 1D
         if (valences[i] == my_class) {
-            const vtkIdType candidate_component_2d = VV[(my_1d*max_VV_guess)+(i-(my_1d*max_VV_guess))];
-            printf("Block %d Thread %02d Inspect %02d Possible shared component with VV[%lld][%lld] (%lld)\n", blockIdx.x, threadIdx.x, inspect_step++, my_1d, i-(my_1d*max_VV_guess), candidate_component_2d);
+            const vtkIdType candidate_component_2d = VV[i]; //[(my_1d*max_VV_guess)+(i-(my_1d*max_VV_guess))];
+            //printf("Block %d Thread %02d Inspect %02d Possible shared component with VV[%lld][%lld] (%lld)\n", blockIdx.x, threadIdx.x, inspect_step++, my_1d, i-(my_1d*max_VV_guess), candidate_component_2d);
             // Find yourself in their adjacency to become a shared component and release burden
             const vtkIdType start_2d = candidate_component_2d*max_VV_guess,
                             stop_2d  = start_2d + VV_index[candidate_component_2d];
@@ -221,42 +221,41 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
                 if (VV[j] == my_2d) {
                     // Shared component!
                     done = true;
-                    burdened = (candidate_component_2d < my_2d); // lower one writes!
+                    burdened = (candidate_component_2d > my_2d); // lower one writes!
+                    /*
                     printf("Block %d Thread %02d Inspect %02d Shares component at VV[%lld][%lld] (%s, %s)\n",
                             blockIdx.x, threadIdx.x, inspect_step, candidate_component_2d, j-(candidate_component_2d*max_VV_guess),
                             my_class == -1 ? "Upper" : "Lower", burdened ? "Burdened to write" : "Not writing");
+                    */
                 }
                 inspect_step++;
             }
-
-            /*
-            vtkIdType max_my_2d = (VV[i]*max_VV_guess) + VV_index[i / max_VV_guess];
-            for(vtkIdType j = (VV[i] * max_VV_guess); !done && (j < max_my_2d); j++) {
-                // Found self connection in VV
-                if (VV[j] == my_2d) {
-                    // Shared component!
-                    printf("Block %d Thread %02d Inspect %02d Shared component on 2d for VV[%lld][%lld] (%s)\n", blockIdx.x, threadIdx.x, inspect_step++, my_2d, j-(VV[i]*max_VV_guess), my_class == -1 ? "Upper" : "Lower");
-                    // Upper == -1, (-1+1)/2 => 0
-                    // Lower ==  1, (1+1)/2  => 1
-                    // --no atomic for vtkIdType-- atomicAdd(classes[(my_1d*3) + ((my_class+1)/2)],1);
-                    // best match: unsigned long long int
-                    // other matches: unsigned int, int
-                    //classes[(my_1d*3) + ((my_class+1)/2)] += 1;
-                    atomicAdd(classes+((my_1d*3) + ((my_class+1)/2)), 1);
-                    // Break all loops
-                    done = true;
-                }
-            }
-            */
         }
     }
     __syncthreads();
     if (burdened) {
         const vtkIdType memoffset = ((my_1d*3)+((my_class+1)/2));
         const unsigned int old = atomicAdd(classes+memoffset,1);
-        printf("Block %d Thread %02d Writes %s component @ mem offset %lld (old: %u)\n", blockIdx.x, threadIdx.x, my_class == -1 ? "Upper" : "Lower", memoffset, old);
+        //printf("Block %d Thread %02d Writes %s component @ mem offset %lld (old: %u)\n", blockIdx.x, threadIdx.x, my_class == -1 ? "Upper" : "Lower", memoffset, old);
     }
-    __syncthreads();
+    //__syncthreads();
+}
+
+__global__ void critPointsC(const vtkIdType * __restrict__ VV,
+                           const unsigned long long * __restrict__ VV_index,
+                           vtkIdType * __restrict__ valences,
+                           const vtkIdType points,
+                           const vtkIdType max_VV_guess,
+                           const double * __restrict__ scalar_values,
+                           unsigned int * __restrict__ classes) {
+    const vtkIdType tid = (blockDim.x * blockIdx.x) + threadIdx.x;
+    /*
+        1) Parallelize VV on second-dimension (can early-exit block if no data
+           available or if a prefix-scan of your primary-dimension list shows
+           that you are a duplicate)
+    */
+    const vtkIdType my_1d = tid / max_VV_guess;
+                    //my_2d = VV[tid];
     /*
         4) Classification is performed as follows: Exactly 1 upper component is
            a maximum; exactly 1 lower component is a minimum; two or more upper
@@ -267,7 +266,7 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
         const vtkIdType my_classes = my_1d*3;
         const unsigned int upper = classes[my_classes],
                            lower = classes[my_classes+1];
-        printf("Block %d Thread %02d Verdict: my_1d (%lld) has %u upper and %u lower\n", blockIdx.x, threadIdx.x, my_1d, upper, lower);
+        //printf("Block %d Thread %02d Verdict: my_1d (%lld) has %u upper and %u lower\n", blockIdx.x, threadIdx.x, my_1d, upper, lower);
         if (upper == 1 && lower == 0) classes[my_classes+2] = 1; // Maximum
         else if (upper == 0 && lower == 1) classes[my_classes+2] = 2; // Minimum
         else if (upper == 1 && lower == 1) classes[my_classes+2] = 3; // Regular
@@ -310,9 +309,11 @@ void export_classes(unsigned int * classes, vtkIdType n_classes, arguments & arg
             out << "INSANITY DETECTED FOR POINT " << i << std::endl;
             n_insane++;
         }
-        //out << "A Class " << i << " = " << my_class << std::endl;
+        out << "A Class " << i << " = " << my_class << std::endl;
+        /*
         out << "A Class " << i << " = " << class_names[my_class] << "(Upper: "
             << n_upper << ", Lower: " << n_lower << ")" << std::endl;
+        */
     }
     if (n_insane > 0) {
         std::cerr << WARN_EMOJI << RED_COLOR << "Insanity detected; "
@@ -447,6 +448,14 @@ int main(int argc, char *argv[]) {
                                                   device_scalar_values,
                                                   device_CPC));
     KERNEL_WARN(critPointsB<<<grid_size KERNEL_LAUNCH_SEPARATOR
+                             thread_block_size>>>(dvv->computed,
+                                                  dvv->index,
+                                                  device_valences,
+                                                  TV->nPoints,
+                                                  max_VV_guess,
+                                                  device_scalar_values,
+                                                  device_CPC));
+    KERNEL_WARN(critPointsC<<<grid_size KERNEL_LAUNCH_SEPARATOR
                              thread_block_size>>>(dvv->computed,
                                                   dvv->index,
                                                   device_valences,

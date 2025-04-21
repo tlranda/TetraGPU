@@ -6,7 +6,7 @@ with open('test_classes.out','r') as f:
         if 'INSANITY' in l:
             insanity.append(last_int)
         else:
-            vertex_id = int(l.split(" ",3)[1])
+            vertex_id = int(l.rsplit(" ",3)[1])
             classes[last_int].append(vertex_id)
 
 print(f"{len(insanity)} insane points detected")
