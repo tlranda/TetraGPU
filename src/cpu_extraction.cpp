@@ -60,6 +60,7 @@ vtkIdType make_TE_and_VE(const TV_Data & tv_relationship,
     }
     return edgeCount;
 }
+
 vtkIdType make_VE(const TV_Data & tv_relationship, VE_Data & edgeTable) {
     vtkIdType edgeCount = 0;
     for(vtkIdType cid = 0; cid < tv_relationship.nCells; cid++) {
@@ -284,3 +285,48 @@ std::unique_ptr<VV_Data> elective_make_VV(const TV_Data & TV,
     return adjacencies;
 }
 
+std::unique_ptr<VT_Data> elective_make_VT(const TV_Data & tv) {
+    std::unique_ptr<VV_Data> vt = std::make_unique<VT_Data>(tv.nPoints);
+    // Accumulate inverse mapping with unique and sorted TIDs
+    // VTK load should ensure this processing IS sorted and evidently it will
+    // be unique as well (no known counterexamples yet)
+    vtkIdType tid = 0;
+    std::for_each(tv.begin(), tv.end(),
+        [&](const std::array<vtkIdType,nbVertsInCell> cell_contents) {
+        std::for_each(cell_contents.begin(), cell_contents.end(),
+                [&](const vtkIdType vertex) {
+                    // Uniqueness check
+                    //const auto pos = std::find((*vt)[vertex].begin(), (*vt)[vertex].end(), tid);
+                    //if (pos == (*vt)[vertex].end()) {
+                    (*vt)[vertex].emplace_back(tid);
+                    //}
+                });
+        tid++;
+        });
+    // If sorting fails / we want to be paranoid, you would:
+    /*
+    std::for_each(vt->begin(), vt->end(),
+        [&](std::vector<vtkIdType> tids) {
+            std::sort(tids.begin(), tids.end());
+        });
+    // This code helps to debug a problem vs solution with(out) the sort above
+    // Uncomment it to read the values from VT, grep for "^Vertex" and you
+    // will have an easier time comparing before/after.
+    for (vtkIdType i = 0; i < tv.nPoints; i++) {
+        std::vector<vtkIdType> & tetra_list = (*vt)[i];
+        std::cout << "Vertex " << i << ", Tetra: ";
+        bool first = true;
+        for (const vtkIdType tetra : tetra_list) {
+            if (first) {
+                first = false;
+            }
+            else {
+                std::cout << ", ";
+            }
+            std::cout << tetra;
+        }
+        std::cout << std::endl;
+    }
+    */
+    return vt;
+}

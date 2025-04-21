@@ -8,6 +8,7 @@ with open('test_classes.out','r') as f:
         else:
             vertex_id = int(l.rsplit(" ",3)[1])
             classes[last_int].append(vertex_id)
+            print(f"Point {vertex_id} is {class_names[last_int]}")
 
 print(f"{len(insanity)} insane points detected")
 for name, clinfo in zip(class_names, classes.values()):

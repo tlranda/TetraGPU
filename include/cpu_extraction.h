@@ -37,5 +37,6 @@ vtkIdType make_TF_and_VF(const TV_Data & tv_relationship,
                          VF_Data & faceTable);
 vtkIdType make_VF(const TV_Data & tv_relationship,
                   VF_Data & faceTable);
+std::unique_ptr<VT_Data> elective_make_VT(const TV_Data & tv_relationship);
 #endif
 

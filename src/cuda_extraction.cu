@@ -1195,3 +1195,47 @@ std::unique_ptr<VV_Data> make_VV_GPU(const TV_Data & TV,
     return vertex_adjacency;
 }
 
+// If CPU elective is not already prepared
+device_VT * make_VT_GPU_return(const TV_Data & TV) {
+    std::unique_ptr<VT_Data> VT = elective_make_VT(TV);
+    return make_VT_GPU_return(*VT);
+}
+device_VT * make_VT_GPU_return(const VT_Data & VT) {
+    // Compute vt's flat size
+    vtkIdType VT_flat_size = 0;
+    std::for_each(VT.begin(), VT.end(),
+        [&](const std::vector<vtkIdType> tlist) {
+            VT_flat_size += tlist.size();
+        });
+    size_t vt_size = sizeof(vtkIdType) * VT_flat_size,
+           vt_index_size = sizeof(unsigned long long int) * VT.size();
+    vtkIdType * vt_computed = nullptr;
+    unsigned long long int * vt_index = nullptr;
+    CUDA_ASSERT(cudaMalloc((void**)&vt_computed, vt_size));
+    CUDA_ASSERT(cudaMalloc((void**)&vt_index, vt_index_size));
+    // Pre-populate VT and VT's index!
+    {
+            vtkIdType * vt_host = nullptr;
+            unsigned long long int * vt_index_host = nullptr;
+            CUDA_ASSERT(cudaMallocHost((void**)&vt_host, vt_size));
+            CUDA_ASSERT(cudaMallocHost((void**)&vt_index_host, vt_index_size));
+            vtkIdType vertex_id = 0,
+                      flat_index = 0;
+            std::for_each(VT.begin(), VT.end(),
+                [&](const std::vector<vtkIdType> tlist) {
+                    vt_index_host[vertex_id++] = flat_index;
+                    for (const vtkIdType tid : tlist) {
+                        vt_host[flat_index++] = tid;
+                    }
+                });
+            /* BLOCKING COPY -- So we can free the host side data safely */
+            CUDA_WARN(cudaMemcpy(vt_computed, vt_host, vt_size, cudaMemcpyHostToDevice));
+            CUDA_WARN(cudaMemcpy(vt_index, vt_index_host, vt_index_size, cudaMemcpyHostToDevice));
+            if (vt_host != nullptr) CUDA_WARN(cudaFreeHost(vt_host));
+            if (vt_index_host != nullptr) CUDA_WARN(cudaFreeHost(vt_index_host));
+    }
+    // Pack data and return
+    device_VT * vt = new device_VT{vt_computed, vt_index};
+    return vt;
+}
+

@@ -309,7 +309,25 @@ int main(int argc, char *argv[]) {
     }
     // OPTIONAL: VT (red) [TV']
     if (args.build_VT()) {
-        std::cerr << EXCLAIM_EMOJI << "VT not implemented yet" << std::endl;
+        std::cout << PUSHPIN_EMOJI << "Using CPU to compute " RED_COLOR "VT" RESET_COLOR << std::endl;
+        timer.label_next_interval(RED_COLOR "VT" RESET_COLOR " [CPU]");
+        timer.tick();
+        std::unique_ptr<VT_Data> VT = elective_make_VT(*TV);
+        timer.tick_announce();
+        std::cout << PUSHPIN_EMOJI << "Using GPU to transfer " RED_COLOR "VT" RESET_COLOR << std::endl;
+        timer.label_next_interval(RED_COLOR "VT" RESET_COLOR " [GPU]");
+        timer.tick();
+        device_VT * dvt = make_VT_GPU_return(*VT);
+        timer.tick_announce();
+        #ifdef VALIDATE_GPU
+        if (args.validate()) {
+            std::cout << OK_EMOJI << "GPU does not compute VT directly"
+                      << std::endl;
+        }
+        #endif
+        // Leak safety, de-allocate memory
+        if (dvt->computed != nullptr) CUDA_WARN(cudaFree(dvt->computed));
+        if (dvt->index != nullptr) CUDA_WARN(cudaFree(dvt->index));
     }
     // OPTIONAL: TT (yellow) [TV x TV']
     if (args.build_TT()) {

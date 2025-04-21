@@ -98,6 +98,17 @@ typedef struct deviceVV {
     }
     */
 } device_VV;
+typedef struct deviceVT {
+    vtkIdType * computed;
+    unsigned long long int * index;
+    deviceVT() {
+        computed = nullptr;
+        index = nullptr;
+    }
+    deviceVT(vtkIdType * c, unsigned long long int * i) {
+        computed = c; index = i;
+    }
+} device_VT;
 
 // Required precomputes for IDs with inherited spatial locality from TV relationship
 typedef std::vector<std::array<vtkIdType,nbEdgesInCell>> TE_Data;

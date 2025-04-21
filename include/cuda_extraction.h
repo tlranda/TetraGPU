@@ -144,6 +144,9 @@ __global__ void VV_kernel(const vtkIdType * __restrict__ tv,
                           unsigned long long int * __restrict__ index,
                           vtkIdType * __restrict__ vv);
 
+device_VT * make_VT_GPU_return(const TV_Data & TV);
+device_VT * make_VT_GPU_return(const VT_Data & VT);
+
 // -- NOT IMPLEMENTED BEYOND THIS LINE --
 
 // ET = TE'
