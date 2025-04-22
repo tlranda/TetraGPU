@@ -37,93 +37,17 @@ __global__ void dummy_kernel(void) {
            a maximum; exactly 1 lower component is a minimum; two or more upper
            or lower components is a saddle; other values are regular.
 */
-__global__ void critPoints(const vtkIdType * __restrict__ VV,
-                           const unsigned long long * __restrict__ VV_index,
-                           vtkIdType * __restrict__ valences,
-                           const vtkIdType points,
-                           const vtkIdType max_VV_guess,
-                           const double * __restrict__ scalar_values,
-                           unsigned int * __restrict__ classes) {
-    vtkIdType tid = (blockDim.x * blockIdx.x) + threadIdx.x;
-    /*
-        1) Parallelize VV on second-dimension (can early-exit block if no data
-           available or if a prefix-scan of your primary-dimension list shows
-           that you are a duplicate)
-    */
-    // Beyond scope of work for the kernel
-    if (tid >= (points * max_VV_guess)) return;
-    vtkIdType my_1d = tid / max_VV_guess,
-              my_2d = VV[tid];
-    // No work for this point's valence
-    if (VV_index[my_1d] <= 0) return;
-    // Prefix scan as anti-duplication
-    for (vtkIdType i = my_1d * max_VV_guess; i < tid; i++) {
-        if (VV[i] == my_2d) return;
-    }
 
-    // BEYOND THIS POINT, YOU ARE AN ACTUAL WORKER THREAD ON THE PROBLEM
-
-    /*
-        2) Read the scalar value used for point classification and classify
-           yourself relative to your primary-dimension scalar value as upper or
-           lower neighbor
-        -- VV-PARALLEL SYNC REQUIRED --
-    */
-    // Classify yourself as an upper or lower valence neighbor to your 1d point
-    // Upper = -1, Lower = 1
-    //vtkIdType my_class = 1 - ((scalar_values[my_2d] >= scalar_values[my_1d])<<1);
-    vtkIdType my_class = 1 - ((scalar_values[my_2d] < scalar_values[my_1d])<<1);
-    valences[tid] = my_class;
-    __syncthreads();
-    /*
-        3) For all other threads sharing your neighborhood classification, scan
-           their connectivity in VV. If you connect to at least one, then you
-           share a component with that neighbor -- the lowest-ranked neighbor
-           will log +1 component of this type and all others exit. If you fail
-           to locate any connections to others in your class, then you have 2+
-           components and are immediately a saddle -- increment your component
-           counter and exit. It does not matter if this "over-counts" the
-           number of components!
-        -- VV-PARALLEL SYNC REQUIRED --
-    */
-    vtkIdType max_my_1d = (my_1d * max_VV_guess) + VV_index[my_1d];
-    bool done = false;
-    for(vtkIdType i = my_1d * max_VV_guess; !done && (i < max_my_1d); i++) {
-        if (valences[i] == my_class) {
-            // Find yourself in their adjacency to become a shared component
-            vtkIdType max_my_2d = VV[i] + VV_index[i / max_VV_guess];
-            for(vtkIdType j = VV[i]; !done && (j < max_my_2d); j++) {
-                if (VV[j] == my_2d) {
-                    // Shared component!
-                    // Upper == -1, (-1+1)/2 => 0
-                    // Lower ==  1, (1+1)/2  => 1
-                    // --no atomic for vtkIdType-- atomicAdd(classes[(my_1d*3) + ((my_class+1)/2)],1);
-                    // best match: unsigned long long int
-                    // other matches: unsigned int, int
-                    //classes[(my_1d*3) + ((my_class+1)/2)] += 1;
-                    atomicAdd(classes+((my_1d*3) + ((my_class+1)/2)), 1);
-                    // Break all loops
-                    done = true;
-                }
-            }
-        }
-    }
-    __syncthreads();
-    /*
-        4) Classification is performed as follows: Exactly 1 upper component is
-           a maximum; exactly 1 lower component is a minimum; two or more upper
-           or lower components is a saddle; other values are regular.
-    */
-    // Limit classification to lowest-ranked thread for single write
-    if (my_1d * max_VV_guess == tid) {
-        vtkIdType upper = classes[(my_1d*3)],
-                  lower = classes[(my_1d*3)+1];
-        if (upper == 1 && lower == 0) classes[(my_1d*3)+2] = 1; // Maximum
-        else if (upper == 0 && lower == 1) classes[(my_1d*3)+2] = 2; // Minimum
-        else if (upper == 1 && lower == 1) classes[(my_1d*3)+2] = 3; // Regular
-        else classes[(my_1d*3)+2] = 4; // Saddle
-    }
-}
+// For parity with Paraview, a tie needs to be broken by lower vertex ID being "lower" than the other one
+#define CLASSIFY const vtkIdType my_class = 1 - (\
+        (scalar_values[my_2d] == scalar_values[my_1d] ? \
+         my_2d < my_1d : \
+         scalar_values[my_2d] < scalar_values[my_1d]) \
+        << 1);
+#define MINIMUM_CLASS 1
+#define MAXIMUM_CLASS 2
+#define REGULAR_CLASS 3
+#define SADDLE_CLASS  4
 
 __global__ void critPointsA(const vtkIdType * __restrict__ VV,
                            const unsigned long long * __restrict__ VV_index,
@@ -158,7 +82,7 @@ __global__ void critPointsA(const vtkIdType * __restrict__ VV,
     // Classify yourself as an upper or lower valence neighbor to your 1d point
     // Upper = -1, Lower = 1
     //vtkIdType my_class = 1 - ((scalar_values[my_2d] (>= / <) scalar_values[my_1d])<<1);
-    const vtkIdType my_class = 1 - ((scalar_values[my_2d] < scalar_values[my_1d])<<1);
+    CLASSIFY
     valences[tid] = my_class;
     //printf("Block %d Thread %02d A valence (%lld,%lld) is %lld\n", blockIdx.x, threadIdx.x, my_1d, my_2d, my_class);
     //__syncthreads();
@@ -191,7 +115,7 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
 
     // BEYOND THIS POINT, YOU ARE AN ACTUAL WORKER THREAD ON THE PROBLEM
     // Which way should the tiebreaker go here?
-    const vtkIdType my_class = 1 - ((scalar_values[my_2d] < scalar_values[my_1d])<<1);
+    CLASSIFY
     /*
         3) For all other threads sharing your neighborhood classification, scan
            their connectivity in VV. If you connect to at least one, then you
@@ -267,10 +191,10 @@ __global__ void critPointsC(const vtkIdType * __restrict__ VV,
         const unsigned int upper = classes[my_classes],
                            lower = classes[my_classes+1];
         //printf("Block %d Thread %02d Verdict: my_1d (%lld) has %u upper and %u lower\n", blockIdx.x, threadIdx.x, my_1d, upper, lower);
-        if (upper == 1 && lower == 0) classes[my_classes+2] = 1; // Maximum
-        else if (upper == 0 && lower == 1) classes[my_classes+2] = 2; // Minimum
-        else if (upper == 1 && lower == 1) classes[my_classes+2] = 3; // Regular
-        else classes[my_classes+2] = 4; // Saddle
+        if (upper == 1 && lower == 0) classes[my_classes+2] = MINIMUM_CLASS;
+        else if (upper == 0 && lower == 1) classes[my_classes+2] = MAXIMUM_CLASS;
+        else if (upper == 1 && lower == 1) classes[my_classes+2] = REGULAR_CLASS;
+        else classes[my_classes+2] = SADDLE_CLASS;
     }
 }
 
@@ -292,21 +216,21 @@ void export_classes(unsigned int * classes, vtkIdType n_classes, arguments & arg
     }
     // Used for actual file handling
     std::ostream out(output_buffer);
-    std::string class_names[] = {"NULL", "max", "min", "regular", "saddle"};
+    std::string class_names[] = {"NULL", "min", "max", "regular", "saddle"};
     vtkIdType n_insane = 0;
     for (vtkIdType i = 0; i < n_classes; i++) {
         // The classification information is provided, then the class:
         // {# upper, # lower, class}
-        // CLASSES = {'maximum': 1, 'minimum': 2, 'regular': 3, 'saddle': 4}
-        unsigned int my_class = classes[(i*3)+2],
-                     n_upper  = classes[(i*3)],
-                     n_lower  = classes[(i*3)+1];
+        // CLASSES = {'minimum': 1, 'maximum': 2, 'regular': 3, 'saddle': 4}
+        unsigned int n_upper  = classes[(i*3)],
+                     n_lower  = classes[(i*3)+1],
+                     my_class = classes[(i*3)+2];
         // Misclassification sanity checks
-        if ((n_lower == 0 && n_upper == 1 && my_class != 1) ||
-            (n_lower == 1 && n_upper == 0 && my_class != 2) ||
-            (n_lower == 1 && n_upper == 1 && my_class != 3) ||
-            (n_lower != 1 && n_upper != 1 && my_class != 4)) {
-            out << "INSANITY DETECTED FOR POINT " << i << std::endl;
+        if ((n_upper == 1 && n_lower == 0 && my_class != MINIMUM_CLASS) ||
+            (n_upper == 0 && n_lower == 1 && my_class != MAXIMUM_CLASS) ||
+            (n_upper == 1 && n_lower == 1 && my_class != REGULAR_CLASS) ||
+            ((n_upper != 1 || n_lower != 1) && my_class != SADDLE_CLASS)) {
+            out << "INSANITY DETECTED (" << n_upper << ", " << n_lower << ") FOR POINT " << i << std::endl;
             n_insane++;
         }
         /*
