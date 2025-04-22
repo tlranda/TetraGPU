@@ -1,4 +1,5 @@
 class_names = ['','max','min','regular','saddle']
+MAX_DISPLAY = 10
 insanity, classes = list(), dict((k,list()) for k in range(len(class_names)))
 with open('test_classes.out','r') as f:
     for l in f.readlines():
@@ -14,5 +15,5 @@ print(f"{len(insanity)} insane points detected")
 for name, clinfo in zip(class_names, classes.values()):
     if name == "":
         continue
-    print(f"{len(clinfo)} {name} points detected")
+    print(f"{len(clinfo)} {name} points detected: {clinfo[:MAX_DISPLAY]}")
 

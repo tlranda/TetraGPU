@@ -158,7 +158,7 @@ __global__ void critPointsA(const vtkIdType * __restrict__ VV,
     // Classify yourself as an upper or lower valence neighbor to your 1d point
     // Upper = -1, Lower = 1
     //vtkIdType my_class = 1 - ((scalar_values[my_2d] (>= / <) scalar_values[my_1d])<<1);
-    const vtkIdType my_class = 1 - ((scalar_values[my_2d] >= scalar_values[my_1d])<<1);
+    const vtkIdType my_class = 1 - ((scalar_values[my_2d] < scalar_values[my_1d])<<1);
     valences[tid] = my_class;
     //printf("Block %d Thread %02d A valence (%lld,%lld) is %lld\n", blockIdx.x, threadIdx.x, my_1d, my_2d, my_class);
     //__syncthreads();
@@ -191,7 +191,7 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
 
     // BEYOND THIS POINT, YOU ARE AN ACTUAL WORKER THREAD ON THE PROBLEM
     // Which way should the tiebreaker go here?
-    const vtkIdType my_class = 1 - ((scalar_values[my_2d] >= scalar_values[my_1d])<<1);
+    const vtkIdType my_class = 1 - ((scalar_values[my_2d] < scalar_values[my_1d])<<1);
     /*
         3) For all other threads sharing your neighborhood classification, scan
            their connectivity in VV. If you connect to at least one, then you
@@ -309,11 +309,11 @@ void export_classes(unsigned int * classes, vtkIdType n_classes, arguments & arg
             out << "INSANITY DETECTED FOR POINT " << i << std::endl;
             n_insane++;
         }
-        out << "A Class " << i << " = " << my_class << std::endl;
         /*
+        out << "A Class " << i << " = " << my_class << std::endl;
+        */
         out << "A Class " << i << " = " << class_names[my_class] << "(Upper: "
             << n_upper << ", Lower: " << n_lower << ")" << std::endl;
-        */
     }
     if (n_insane > 0) {
         std::cerr << WARN_EMOJI << RED_COLOR << "Insanity detected; "
