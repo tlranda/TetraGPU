@@ -44,8 +44,8 @@ __global__ void dummy_kernel(void) {
          my_2d < my_1d : \
          scalar_values[my_2d] < scalar_values[my_1d]) \
         << 1);
-#define MINIMUM_CLASS 1
-#define MAXIMUM_CLASS 2
+#define MAXIMUM_CLASS 1
+#define MINIMUM_CLASS 2
 #define REGULAR_CLASS 3
 #define SADDLE_CLASS  4
 
@@ -229,7 +229,7 @@ void export_classes(unsigned int * classes, vtkIdType n_classes, arguments & arg
         if ((n_upper == 1 && n_lower == 0 && my_class != MINIMUM_CLASS) ||
             (n_upper == 0 && n_lower == 1 && my_class != MAXIMUM_CLASS) ||
             (n_upper == 1 && n_lower == 1 && my_class != REGULAR_CLASS) ||
-            ((n_upper != 1 || n_lower != 1) && my_class != SADDLE_CLASS)) {
+            ((n_upper > 1 || n_lower > 1) && my_class != SADDLE_CLASS)) {
             out << "INSANITY DETECTED (" << n_upper << ", " << n_lower << ") FOR POINT " << i << std::endl;
             n_insane++;
         }
