@@ -38,7 +38,7 @@ def convert_vtk_to_txt(vtk_file_path, txt_file_path, total_points=None, global_i
     else:
         full_mesh = pv.read(global_indices)
         if full_mesh.n_points == 0:
-            raise ValueError("No points found in VTK file '{global_indices}'")
+            raise ValueError(f"No points found in VTK file '{global_indices}'")
         indices = list()
         for point in points:
             indices.append(full_mesh.FindPoint(point))
