@@ -49,6 +49,8 @@ __global__ void dummy_kernel(void) {
 #define REGULAR_CLASS 3
 #define SADDLE_CLASS  4
 
+#define FORCED_BLOCK_IDX 11076
+
 __global__ void critPointsA(const vtkIdType * __restrict__ VV,
                            const unsigned long long * __restrict__ VV_index,
                            vtkIdType * __restrict__ valences,
@@ -57,6 +59,7 @@ __global__ void critPointsA(const vtkIdType * __restrict__ VV,
                            const double * __restrict__ scalar_values,
                            unsigned int * __restrict__ classes) {
     const vtkIdType tid = (blockDim.x * blockIdx.x) + threadIdx.x;
+    //const vtkIdType tid = (blockDim.x * FORCED_BLOCK_IDX) + threadIdx.x;
     /*
         1) Parallelize VV on second-dimension (can early-exit block if no data
            available or if a prefix-scan of your primary-dimension list shows
@@ -96,6 +99,8 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
                            const double * __restrict__ scalar_values,
                            unsigned int * __restrict__ classes) {
     const vtkIdType tid = (blockDim.x * blockIdx.x) + threadIdx.x;
+    //bool printing = blockIdx.x == FORCED_BLOCK_IDX;
+    //const vtkIdType tid = (blockDim.x * FORCED_BLOCK_IDX) + threadIdx.x;
     /*
         1) Parallelize VV on second-dimension (can early-exit block if no data
            available or if a prefix-scan of your primary-dimension list shows
@@ -105,17 +110,20 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
               my_2d = VV[tid];
     // No work for this point's valence
     if (VV_index[my_1d] <= 0 || my_2d < 0) return;
-    // { printf("Block %d Thread %02d early exit: %s\n", blockIdx.x, threadIdx.x, "No VV_index work"); return; }
+    //{ printf("Block %d Thread %02d early exit: %s\n", blockIdx.x, threadIdx.x, "No VV_index work"); return; }
     // Prefix scan as anti-duplication
     for (vtkIdType i = my_1d * max_VV_guess; i < tid; i++) {
         if (VV[i] == my_2d) return;
         //{ printf("Block %d Thread %02d early exit: %s %d\n", blockIdx.x, threadIdx.x, "Prefix duplicate found @ index", i-(my_1d*max_VV_guess)); return; }
     }
-    //printf("Block %d Thread %02d B init on my_1d %lld and my_2d %lld\n", blockIdx.x, threadIdx.x, my_1d, my_2d);
 
     // BEYOND THIS POINT, YOU ARE AN ACTUAL WORKER THREAD ON THE PROBLEM
     // Which way should the tiebreaker go here?
-    CLASSIFY
+    const vtkIdType my_class = valences[tid];
+    /*
+    if (printing)
+    printf("Block %d Thread %02d B init on my_1d %lld and my_2d %lld with valence %lld\n", blockIdx.x, threadIdx.x, my_1d, my_2d, my_class);
+    /*
     /*
         3) For all other threads sharing your neighborhood classification, scan
            their connectivity in VV. If you connect to at least one, then you
@@ -128,15 +136,22 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
         -- VV-PARALLEL SYNC REQUIRED --
     */
     const vtkIdType max_my_1d = (my_1d * max_VV_guess) + VV_index[my_1d];
+    /*
+    if (printing)
+    printf("Block %d Thread %02d has max 1d range %lld\n", blockIdx.x, threadIdx.x, max_my_1d-(my_1d*max_VV_guess));
+    */
     bool done = false, burdened = true;
     int inspect_step = 0;
     // MISSING: Burden of lowest check! If you are the lowest to have your valence class, you ALWAYS log yourself as a component
     // PRACTICAL: Should only need to scan elements sharing your 1D up until yourself
     for(vtkIdType i = my_1d * max_VV_guess; !done && (i < max_my_1d); i++) {
         // Found same valence connected to 1D
-        if (valences[i] == my_class) {
+        if (valences[i] == my_class && i != tid) {
             const vtkIdType candidate_component_2d = VV[i]; //[(my_1d*max_VV_guess)+(i-(my_1d*max_VV_guess))];
-            //printf("Block %d Thread %02d Inspect %02d Possible shared component with VV[%lld][%lld] (%lld)\n", blockIdx.x, threadIdx.x, inspect_step++, my_1d, i-(my_1d*max_VV_guess), candidate_component_2d);
+            /*
+            if (printing)
+            printf("Block %d Thread %02d Inspect %02d Possible shared component with VV[%lld][%lld] (%lld)\n", blockIdx.x, threadIdx.x, inspect_step++, my_1d, i-(my_1d*max_VV_guess), candidate_component_2d);
+            */
             // Find yourself in their adjacency to become a shared component and release burden
             const vtkIdType start_2d = candidate_component_2d*max_VV_guess,
                             stop_2d  = start_2d + VV_index[candidate_component_2d];
@@ -144,9 +159,10 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
                 // Do you see your 2d in their 2d?
                 if (VV[j] == my_2d) {
                     // Shared component!
-                    done = true;
                     burdened = (candidate_component_2d > my_2d); // lower one writes!
+                    done = burdened; // EXPERIMENTAL: Only done if you're burdened
                     /*
+                    if (printing)
                     printf("Block %d Thread %02d Inspect %02d Shares component at VV[%lld][%lld] (%s, %s)\n",
                             blockIdx.x, threadIdx.x, inspect_step, candidate_component_2d, j-(candidate_component_2d*max_VV_guess),
                             my_class == -1 ? "Upper" : "Lower", burdened ? "Burdened to write" : "Not writing");
@@ -160,7 +176,10 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
     if (burdened) {
         const vtkIdType memoffset = ((my_1d*3)+((my_class+1)/2));
         const unsigned int old = atomicAdd(classes+memoffset,1);
-        //printf("Block %d Thread %02d Writes %s component @ mem offset %lld (old: %u)\n", blockIdx.x, threadIdx.x, my_class == -1 ? "Upper" : "Lower", memoffset, old);
+        /*
+        if (printing)
+        printf("Block %d Thread %02d Writes %s component @ mem offset %lld (old: %u)\n", blockIdx.x, threadIdx.x, my_class == -1 ? "Upper" : "Lower", memoffset, old);
+        */
     }
     //__syncthreads();
 }
@@ -173,6 +192,8 @@ __global__ void critPointsC(const vtkIdType * __restrict__ VV,
                            const double * __restrict__ scalar_values,
                            unsigned int * __restrict__ classes) {
     const vtkIdType tid = (blockDim.x * blockIdx.x) + threadIdx.x;
+    //bool printing = blockIdx.x == FORCED_BLOCK_IDX;
+    //const vtkIdType tid = (blockDim.x * FORCED_BLOCK_IDX) + threadIdx.x;
     /*
         1) Parallelize VV on second-dimension (can early-exit block if no data
            available or if a prefix-scan of your primary-dimension list shows
@@ -190,10 +211,13 @@ __global__ void critPointsC(const vtkIdType * __restrict__ VV,
         const vtkIdType my_classes = my_1d*3;
         const unsigned int upper = classes[my_classes],
                            lower = classes[my_classes+1];
-        //printf("Block %d Thread %02d Verdict: my_1d (%lld) has %u upper and %u lower\n", blockIdx.x, threadIdx.x, my_1d, upper, lower);
-        if (upper == 1 && lower == 0) classes[my_classes+2] = MINIMUM_CLASS;
-        else if (upper == 0 && lower == 1) classes[my_classes+2] = MAXIMUM_CLASS;
-        else if (upper == 1 && lower == 1) classes[my_classes+2] = REGULAR_CLASS;
+        /*
+        if (printing)
+        printf("Block %d Thread %02d Verdict: my_1d (%lld) has %u upper and %u lower\n", blockIdx.x, threadIdx.x, my_1d, upper, lower);
+        */
+        if (upper >= 1 && lower == 0) classes[my_classes+2] = MINIMUM_CLASS;
+        else if (upper == 0 && lower >= 1) classes[my_classes+2] = MAXIMUM_CLASS;
+        else if (upper >= 1 and upper == lower /* upper == 1 && lower == 1 */) classes[my_classes+2] = REGULAR_CLASS;
         else classes[my_classes+2] = SADDLE_CLASS;
     }
 }
@@ -219,6 +243,7 @@ void export_classes(unsigned int * classes, vtkIdType n_classes, arguments & arg
     std::string class_names[] = {"NULL", "min", "max", "regular", "saddle"};
     vtkIdType n_insane = 0;
     for (vtkIdType i = 0; i < n_classes; i++) {
+    //for (vtkIdType i = FORCED_BLOCK_IDX; i < FORCED_BLOCK_IDX+1; i++) {
         // The classification information is provided, then the class:
         // {# upper, # lower, class}
         // CLASSES = {'minimum': 1, 'maximum': 2, 'regular': 3, 'saddle': 4}
@@ -233,11 +258,11 @@ void export_classes(unsigned int * classes, vtkIdType n_classes, arguments & arg
             out << "INSANITY DETECTED (" << n_upper << ", " << n_lower << ") FOR POINT " << i << std::endl;
             n_insane++;
         }
-        /*
         out << "A Class " << i << " = " << my_class << std::endl;
-        */
+        /*
         out << "A Class " << i << " = " << class_names[my_class] << "(Upper: "
             << n_upper << ", Lower: " << n_lower << ")" << std::endl;
+        */
     }
     if (n_insane > 0) {
         std::cerr << WARN_EMOJI << RED_COLOR << "Insanity detected; "
@@ -352,17 +377,10 @@ int main(int argc, char *argv[]) {
     const vtkIdType n_to_compute = TV->nPoints * max_VV_guess;
     dim3 thread_block_size = max_VV_guess,
          grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
+    // DEBUG: Set grid size to one to only inspect a single block
+    //grid_size.x = 1;
+    //std::cerr << EXCLAIM_EMOJI << "DEBUG! Setting kernel size to 1 block (as block " << FORCED_BLOCK_IDX << ")" << std::endl;
     timer.tick();
-    /*
-    KERNEL_WARN(critPoints<<<grid_size KERNEL_LAUNCH_SEPARATOR
-                             thread_block_size>>>(dvv->computed,
-                                                  dvv->index,
-                                                  device_valences,
-                                                  TV->nPoints,
-                                                  max_VV_guess,
-                                                  device_scalar_values,
-                                                  device_CPC));
-    */
     KERNEL_WARN(critPointsA<<<grid_size KERNEL_LAUNCH_SEPARATOR
                              thread_block_size>>>(dvv->computed,
                                                   dvv->index,
