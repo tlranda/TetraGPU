@@ -49,7 +49,7 @@ __global__ void dummy_kernel(void) {
 #define REGULAR_CLASS 3
 #define SADDLE_CLASS  4
 
-#define FORCED_BLOCK_IDX 11076
+#define FORCED_BLOCK_IDX 1
 
 __global__ void critPointsA(const vtkIdType * __restrict__ VV,
                            const unsigned long long * __restrict__ VV_index,
@@ -123,7 +123,7 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
     /*
     if (printing)
     printf("Block %d Thread %02d B init on my_1d %lld and my_2d %lld with valence %lld\n", blockIdx.x, threadIdx.x, my_1d, my_2d, my_class);
-    /*
+    */
     /*
         3) For all other threads sharing your neighborhood classification, scan
            their connectivity in VV. If you connect to at least one, then you
@@ -145,9 +145,9 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
     // MISSING: Burden of lowest check! If you are the lowest to have your valence class, you ALWAYS log yourself as a component
     // PRACTICAL: Should only need to scan elements sharing your 1D up until yourself
     for(vtkIdType i = my_1d * max_VV_guess; !done && (i < max_my_1d); i++) {
-        // Found same valence connected to 1D
-        if (valences[i] == my_class && i != tid) {
-            const vtkIdType candidate_component_2d = VV[i]; //[(my_1d*max_VV_guess)+(i-(my_1d*max_VV_guess))];
+        // Found same valence connected to 1D at a point with a lower index than you
+        const vtkIdType candidate_component_2d = VV[i]; //[(my_1d*max_VV_guess)+(i-(my_1d*max_VV_guess))];
+        if (valences[i] == my_class && candidate_component_2d < my_2d) {
             /*
             if (printing)
             printf("Block %d Thread %02d Inspect %02d Possible shared component with VV[%lld][%lld] (%lld)\n", blockIdx.x, threadIdx.x, inspect_step++, my_1d, i-(my_1d*max_VV_guess), candidate_component_2d);
@@ -160,7 +160,7 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
                 if (VV[j] == my_2d) {
                     // Shared component!
                     burdened = (candidate_component_2d > my_2d); // lower one writes!
-                    done = burdened; // EXPERIMENTAL: Only done if you're burdened
+                    //done = burdened; // EXPERIMENTAL: Only done if you're burdened
                     /*
                     if (printing)
                     printf("Block %d Thread %02d Inspect %02d Shares component at VV[%lld][%lld] (%s, %s)\n",
@@ -217,7 +217,7 @@ __global__ void critPointsC(const vtkIdType * __restrict__ VV,
         */
         if (upper >= 1 && lower == 0) classes[my_classes+2] = MINIMUM_CLASS;
         else if (upper == 0 && lower >= 1) classes[my_classes+2] = MAXIMUM_CLASS;
-        else if (upper >= 1 and upper == lower /* upper == 1 && lower == 1 */) classes[my_classes+2] = REGULAR_CLASS;
+        else if (/* upper >= 1 and upper == lower /**/ upper == 1 && lower == 1 /**/) classes[my_classes+2] = REGULAR_CLASS;
         else classes[my_classes+2] = SADDLE_CLASS;
     }
 }
@@ -251,18 +251,18 @@ void export_classes(unsigned int * classes, vtkIdType n_classes, arguments & arg
                      n_lower  = classes[(i*3)+1],
                      my_class = classes[(i*3)+2];
         // Misclassification sanity checks
-        if ((n_upper == 1 && n_lower == 0 && my_class != MINIMUM_CLASS) ||
-            (n_upper == 0 && n_lower == 1 && my_class != MAXIMUM_CLASS) ||
+        if ((n_upper >= 1 && n_lower == 0 && my_class != MINIMUM_CLASS) ||
+            (n_upper == 0 && n_lower >= 1 && my_class != MAXIMUM_CLASS) ||
             (n_upper == 1 && n_lower == 1 && my_class != REGULAR_CLASS) ||
-            ((n_upper > 1 || n_lower > 1) && my_class != SADDLE_CLASS)) {
+            ((n_upper > 1 && n_lower > 1) && my_class != SADDLE_CLASS)) {
             out << "INSANITY DETECTED (" << n_upper << ", " << n_lower << ") FOR POINT " << i << std::endl;
             n_insane++;
         }
-        out << "A Class " << i << " = " << my_class << std::endl;
         /*
+        out << "A Class " << i << " = " << my_class << std::endl;
+        */
         out << "A Class " << i << " = " << class_names[my_class] << "(Upper: "
             << n_upper << ", Lower: " << n_lower << ")" << std::endl;
-        */
     }
     if (n_insane > 0) {
         std::cerr << WARN_EMOJI << RED_COLOR << "Insanity detected; "
