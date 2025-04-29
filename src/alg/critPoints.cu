@@ -142,8 +142,10 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
     */
     bool done = false, burdened = true;
     int inspect_step = 0;
-    // MISSING: Burden of lowest check! If you are the lowest to have your valence class, you ALWAYS log yourself as a component
-    // PRACTICAL: Should only need to scan elements sharing your 1D up until yourself
+    /* KNOWN ISSUE: This "does" Union-Find in O(n) time rather than something
+       that can be semantically correct. Needs to check within-block
+       connectivity in iterative rounds to ensure regular points aren't
+       mislabeled as saddles. */
     for(vtkIdType i = my_1d * max_VV_guess; !done && (i < max_my_1d); i++) {
         // Found same valence connected to 1D at a point with a lower index than you
         const vtkIdType candidate_component_2d = VV[i]; //[(my_1d*max_VV_guess)+(i-(my_1d*max_VV_guess))];
