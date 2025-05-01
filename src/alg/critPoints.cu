@@ -49,12 +49,17 @@ __global__ void dummy_kernel(void) {
 #define REGULAR_CLASS 3
 #define SADDLE_CLASS  4
 
+/*
 #define TID_SELECTION (blockDim.x * blockIdx.x) + threadIdx.x
-#define SET_DEBUG_KERNEL_FOCUS 
+#define PRINT_ON 0
+#define CONSTRAIN_BLOCK 0
+*/
 // DEBUG: Set grid size to one to only inspect a single block
-#define FORCED_BLOCK_IDX 5
-//#define TID_SELECTION (blockDim.x * FORCED_BLOCK_IDX) + threadIdx.x
-//#define SET_DEBUG_KERNEL_FOCUS grid_size.x = 1; std::cerr << EXCLAIM_EMOJI << "DEBUG! Setting kernel size to 1 block (as block " << FORCED_BLOCK_IDX << ")" << std::endl;
+#define FORCED_BLOCK_IDX 667
+#define TID_SELECTION (blockDim.x * FORCED_BLOCK_IDX) + threadIdx.x
+#define PRINT_ON 1
+#define CONSTRAIN_BLOCK 1
+
 
 __global__ void critPointsA(const vtkIdType * __restrict__ VV,
                            const unsigned long long * __restrict__ VV_index,
@@ -129,7 +134,9 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
     const vtkIdType my_class = valences[tid];
     neighborhood[threadIdx.x] = my_2d; // Initialize neighborhood with YOURSELF
     __syncthreads();
-    //printf("Block %d Thread %02d B init on my_1d %lld and my_2d %lld with valence %lld\n", blockIdx.x, threadIdx.x, my_1d, my_2d, my_class);
+    #if PRINT_ON
+    printf("Block %d Thread %02d B init on my_1d %lld and my_2d %lld with valence %lld\n", blockIdx.x, threadIdx.x, my_1d, my_2d, my_class);
+    #endif
     /*
         3) For all other threads sharing your neighborhood classification, scan
            their connectivity in VV and update your "lowest classifying point"
@@ -137,13 +144,6 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
            where no edits are made, then if you have your own IDX at your
            location in memory, you log +1 component of your type.
     */
-    /*
-    printf("Block %d Thread %02d has max 1d range %lld\n", blockIdx.x, threadIdx.x, max_my_1d-min_my_1d);
-    */
-    /* KNOWN ISSUE: This "does" Union-Find in O(n) time rather than something
-       that can be semantically correct. Needs to check within-block
-       connectivity in iterative rounds to ensure regular points aren't
-       mislabeled as saddles. */
     bool upper_converge = false, lower_converge = false;
     int inspect_step = 0;
     // Repeat until both component directions converge
@@ -151,7 +151,7 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
         inspect_step++;
         // Sanity: Guarantee zero-init
         if (threadIdx.x == 0) {
-            /*
+            #if PRINT_ON
             printf("Block %d Iteration %d: upper_edits %llu lower_edits %llu Neighborhood %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld\n",
                     blockIdx.x, inspect_step, *upper_edits, *lower_edits,
                     neighborhood[0],
@@ -186,7 +186,7 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
                     neighborhood[29],
                     neighborhood[30],
                     neighborhood[31]);
-            */
+            #endif
             *upper_edits = 0;
             *lower_edits = 0;
         }
@@ -196,7 +196,6 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
             const vtkIdType candidate_component_2d = VV[i];
             if (i != tid && valences[i] == my_class) {
                 /*
-                if (printing)
                 printf("Block %d Thread %02d Inspect %02d Possible shared component with VV[%lld][%lld] (%lld)\n", blockIdx.x, threadIdx.x, inspect_step++, my_1d, i-(my_1d*max_VV_guess), candidate_component_2d);
                 */
                 // Find yourself in their adjacency to become a shared component and release burden
@@ -226,9 +225,9 @@ __global__ void critPointsB(const vtkIdType * __restrict__ VV,
     if (neighborhood[threadIdx.x] == my_2d) { // You are the root of a component!
         const vtkIdType memoffset = ((my_1d*3)+((my_class+1)/2));
         const unsigned int old = atomicAdd(classes+memoffset,1);
-        /*
+        #if PRINT_ON
         printf("Block %d Thread %02d Writes %s component @ mem offset %lld (old: %u)\n", blockIdx.x, threadIdx.x, my_class == -1 ? "Upper" : "Lower", memoffset, old);
-        */
+        #endif
     }
     //__syncthreads();
 }
@@ -258,9 +257,9 @@ __global__ void critPointsC(const vtkIdType * __restrict__ VV,
         const vtkIdType my_classes = my_1d*3;
         const unsigned int upper = classes[my_classes],
                            lower = classes[my_classes+1];
-        ///*
+        #if PRINT_ON
         printf("Block %d Thread %02d Verdict: my_1d (%lld) has %u upper and %u lower\n", blockIdx.x, threadIdx.x, my_1d, upper, lower);
-        //*/
+        #endif
         if (upper >= 1 && lower == 0) classes[my_classes+2] = MINIMUM_CLASS;
         else if (upper == 0 && lower >= 1) classes[my_classes+2] = MAXIMUM_CLASS;
         else if (/* upper >= 1 and upper == lower /**/ upper == 1 && lower == 1 /**/) classes[my_classes+2] = REGULAR_CLASS;
@@ -288,8 +287,11 @@ void export_classes(unsigned int * classes, vtkIdType n_classes, arguments & arg
     std::ostream out(output_buffer);
     std::string class_names[] = {"NULL", "min", "max", "regular", "saddle"};
     vtkIdType n_insane = 0;
+    #if CONSTRAIN_BLOCK
+    for (vtkIdType i = FORCED_BLOCK_IDX; i < FORCED_BLOCK_IDX+1; i++) {
+    #else
     for (vtkIdType i = 0; i < n_classes; i++) {
-    //for (vtkIdType i = FORCED_BLOCK_IDX; i < FORCED_BLOCK_IDX+1; i++) {
+    #endif
         // The classification information is provided, then the class:
         // {# upper, # lower, class}
         // CLASSES = {'minimum': 1, 'maximum': 2, 'regular': 3, 'saddle': 4}
@@ -424,7 +426,10 @@ int main(int argc, char *argv[]) {
                     shared_mem_size = sizeof(unsigned long long) * (2+max_VV_guess);
     dim3 thread_block_size = max_VV_guess,
          grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
-    SET_DEBUG_KERNEL_FOCUS
+    #if CONSTRAIN_BLOCK
+    grid_size.x = 1;
+    std::cerr << EXCLAIM_EMOJI << "DEBUG! Setting kernel size to 1 block (as block " << FORCED_BLOCK_IDX << ")" << std::endl;
+    #endif
     timer.tick();
     KERNEL_WARN(critPointsA<<<grid_size KERNEL_LAUNCH_SEPARATOR
                              thread_block_size>>>(dvv->computed,
