@@ -99,8 +99,8 @@ elif args.verify is not None and target_size != len(verify_points):
 
 print(f"{len(insanity)} insane points detected: {insanity[:args.max_display]}")
 for name, clinfo in zip(class_names, classes.values()):
-    if name == "NULL":
-        continue
+    #if name == "NULL":
+    #    continue
     print(f"{len(clinfo)}{f'/{len(verify_lookup[name])}' if args.verify else ''} {name} points detected: {clinfo[:args.max_display]}")
 
 if args.verify is not None:
