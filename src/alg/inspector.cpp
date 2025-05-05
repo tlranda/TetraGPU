@@ -18,15 +18,15 @@
 #define MINIMUM_CLASS 2
 #define REGULAR_CLASS 3
 #define SADDLE_CLASS  4
-#define FORCED_BLOCK_IDX 667
+#define FORCED_BLOCK_IDX 9904
 
 void critPointsCPU(const vtkIdType * __restrict__ VV,
                    const unsigned long long * __restrict__ VV_index,
-                   vtkIdType * __restrict__ valences,
-                   const vtkIdType points,
+                   /*vtkIdType * __restrict__ valences,
+                   const vtkIdType points,*/
                    const vtkIdType max_VV_guess,
-                   const double * __restrict__ scalar_values,
-                   unsigned int * __restrict__ classes) {
+                   const double * __restrict__ scalar_values/*,
+                   unsigned int * __restrict__ classes*/) {
     std::cout << "Classify point " << FORCED_BLOCK_IDX
               << " (connected to up to " << VV_index[FORCED_BLOCK_IDX]
               << " points)" << std::endl;
@@ -34,7 +34,7 @@ void critPointsCPU(const vtkIdType * __restrict__ VV,
     std::vector<vtkIdType> active_indices;
     std::vector<bool> scalar_compare;
     const vtkIdType my_1d = FORCED_BLOCK_IDX;
-    for (vtkIdType idx = 0; idx < VV_index[FORCED_BLOCK_IDX]; idx++) {
+    for (unsigned long long idx = 0; idx < VV_index[FORCED_BLOCK_IDX]; idx++) {
         const vtkIdType my_2d = VV[(FORCED_BLOCK_IDX * max_VV_guess) + idx],
                         classification = CLASSIFY;
         if (unique_vertices.count(my_2d) == 1) {
@@ -46,7 +46,7 @@ void critPointsCPU(const vtkIdType * __restrict__ VV,
         std::cout << "Connection " << FORCED_BLOCK_IDX << " -> " << my_2d
                   << " (Scalar relation: " << (classification == 1)
                   << ")" << std::endl;
-        for (vtkIdType idx2 = 0; idx2 < VV_index[my_2d]; idx2++) {
+        for (unsigned long long idx2 = 0; idx2 < VV_index[my_2d]; idx2++) {
             std::cout << "\tPossible connection to point "
                       << VV[(my_2d * max_VV_guess) + idx2] << std::endl;
         }
@@ -248,7 +248,7 @@ int main(int argc, char *argv[]) {
     timer.tick();
     // Have to make a max VV guess
     vtkIdType max_VV_guess = get_approx_max_VV(*TV, TV->nPoints);
-    std::unique_ptr<VV_Data> VV = make_VV_GPU(*TV, TV->nCells, TV->nPoints, true, args);
+    std::unique_ptr<VV_Data> VV = make_VV_GPU(*TV, TV->nCells, TV->nPoints, true);
     timer.tick_announce();
 
     // Critical Points
@@ -272,7 +272,7 @@ int main(int argc, char *argv[]) {
     for(vtkIdType i = 0; i < TV->nPoints; i++) {
         valences[i] = 0;
         vv_index_flat[i] = (*VV)[i].size();
-        for (vtkIdType x = 0; x < vv_index_flat[i]; x++) {
+        for (unsigned long long x = 0; x < vv_index_flat[i]; x++) {
             vv_flat[(i*max_VV_guess)+x] = (*VV)[i][x];
             //std::cerr << "VV connects " << i << " to " << (*VV)[i][x] << std::endl;
         }
@@ -294,11 +294,13 @@ int main(int argc, char *argv[]) {
     timer.tick();
     critPointsCPU(vv_flat,
                   vv_index_flat,
+                  /*
                   valences,
                   TV->nPoints,
+                  */
                   max_VV_guess,
-                  scalar_values,
-                  host_CPC);
+                  scalar_values/*,
+                  host_CPC*/);
     timer.tick_announce();
     timer.tick();
     //export_classes(host_CPC, TV->nPoints, args);

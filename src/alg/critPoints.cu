@@ -55,7 +55,9 @@ __global__ void dummy_kernel(void) {
 #define CONSTRAIN_BLOCK 0
 */
 // DEBUG: Set grid size to one to only inspect a single block
-#define FORCED_BLOCK_IDX 667
+// BAD (regular -> 1-saddle): 667, 9361, 13566
+// BAD (regular -> 2-saddle): 9904, 10748, 10773, 10930, 10984, 10998, 11013, 11076, 11081, 11150, 11158, 11514, 11692, 13013, 13323, 14383
+#define FORCED_BLOCK_IDX 9904
 #define TID_SELECTION (blockDim.x * FORCED_BLOCK_IDX) + threadIdx.x
 #define PRINT_ON 1
 #define CONSTRAIN_BLOCK 1
