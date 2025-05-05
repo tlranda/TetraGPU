@@ -379,6 +379,7 @@ int main(int argc, char *argv[]) {
     std::cout << PUSHPIN_EMOJI << "Using GPU to compute " YELLOW_COLOR "VV" RESET_COLOR << std::endl;
     timer.label_next_interval(YELLOW_COLOR "VV" RESET_COLOR " [GPU]");
     timer.tick();
+    Timer all_critical_points(false, "ALL Critical Points");
     // Have to make a max VV guess
     vtkIdType max_VV_guess = get_approx_max_VV(*TV, TV->nPoints);
     device_VV * dvv = make_VV_GPU_return(*TV, TV->nCells, TV->nPoints,
@@ -475,6 +476,7 @@ int main(int argc, char *argv[]) {
     */
     CUDA_WARN(cudaDeviceSynchronize()); // Make algorithm timing accurate
     timer.tick_announce();
+    all_critical_points.tick_announce();
     timer.label_next_interval("Retrieve results from GPU");
     timer.tick();
     CUDA_WARN(cudaMemcpy(host_CPC, device_CPC, classes_size, cudaMemcpyDeviceToHost));

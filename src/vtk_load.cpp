@@ -138,7 +138,7 @@ std::unique_ptr<TV_Data> get_TV_from_VTK(const arguments args) {
     for (int i = 0; i < pd->GetNumberOfArrays(); i++) {
         std::cout << "\tArray " << i << " is named " << (pd->GetArrayName(i) ? pd->GetArrayName(i) : "NULL (not specified)") << std::endl;
     }
-    vtkDataArray* vertexAttributes = pd->GetScalars();
+    vtkDataArray* vertexAttributes = pd->GetArray(0);
     if (!vertexAttributes) {
         std::cerr << EXCLAIM_EMOJI << "No vertex attributes found in the dataset" << std::endl;
         exit(EXIT_FAILURE);
