@@ -262,12 +262,17 @@ __global__ void critPointsC(const vtkIdType * __restrict__ VV,
         #endif
         if (upper >= 1 && lower == 0) classes[my_classes+2] = MINIMUM_CLASS;
         else if (upper == 0 && lower >= 1) classes[my_classes+2] = MAXIMUM_CLASS;
-        else if (/* upper >= 1 and upper == lower /**/ upper == 1 && lower == 1 /**/) classes[my_classes+2] = REGULAR_CLASS;
+        else if (/* upper >= 1 and upper == lower / **/ upper == 1 && lower == 1 /**/) classes[my_classes+2] = REGULAR_CLASS;
         else classes[my_classes+2] = SADDLE_CLASS;
     }
 }
 
-void export_classes(unsigned int * classes, vtkIdType n_classes, arguments & args) {
+void export_classes(unsigned int * classes,
+                    #if CONSTRAIN_BLOCK
+                    #else
+                    vtkIdType n_classes,
+                    #endif
+                    arguments & args) {
     std::ofstream output_fstream; // Used for file handle to indicated name
     std::streambuf * output_buffer; // Buffer may point to stdout or file handle
     if (args.export_ == "") {
@@ -368,7 +373,7 @@ int main(int argc, char *argv[]) {
     // Have to make a max VV guess
     vtkIdType max_VV_guess = get_approx_max_VV(*TV, TV->nPoints);
     device_VV * dvv = make_VV_GPU_return(*TV, TV->nCells, TV->nPoints,
-                                         max_VV_guess, true, args); // Args not used, actually
+                                         max_VV_guess, true);
     timer.tick_announce();
 
     // Critical Points
@@ -395,7 +400,7 @@ int main(int argc, char *argv[]) {
     vtkIdType * valences = nullptr;
     {
         CUDA_ASSERT(cudaMallocHost((void**)&valences, valences_size));
-        for(vtkIdType i = 0; i < valences_size / sizeof(vtkIdType); i++) {
+        for(unsigned long long i = 0; i < valences_size / sizeof(vtkIdType); i++) {
             valences[i] = 0;
         }
         CUDA_WARN(cudaMemcpy(device_valences, valences, valences_size, cudaMemcpyHostToDevice));
@@ -404,7 +409,7 @@ int main(int argc, char *argv[]) {
         for(vtkIdType i = 0; i < TV->nPoints; i++) {
             scalar_values[i] = TV->vertexAttributes[i];
             //std::cerr << "TV value for point " << i << ": " << TV->vertexAttributes[i] << std::endl;
-            std::cout << "A Scalar value for point " << i << ": " << scalar_values[i] << std::endl;
+            //std::cout << "A Scalar value for point " << i << ": " << scalar_values[i] << std::endl;
         }
         CUDA_WARN(cudaMemcpy(device_scalar_values, scalar_values, scalars_size, cudaMemcpyHostToDevice));
 
@@ -473,7 +478,12 @@ int main(int argc, char *argv[]) {
     }
     */
     timer.tick();
-    export_classes(host_CPC, TV->nPoints, args);
+    export_classes(host_CPC,
+                   #if CONSTRAIN_BLOCK
+                   #else
+                   TV->nPoints,
+                   #endif
+                   args);
     timer.tick_announce();
     if (host_CPC != nullptr) CUDA_WARN(cudaFreeHost(host_CPC));
     if (device_CPC != nullptr) CUDA_WARN(cudaFree(device_CPC));

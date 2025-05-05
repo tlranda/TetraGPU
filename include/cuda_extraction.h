@@ -28,13 +28,11 @@ void make_VF_for_GPU(const VF_Data & vf_relationship,
 vtkIdType * make_EV_GPU_return(const VE_Data & edgeTable,
                                const vtkIdType n_points,
                                const vtkIdType n_edges,
-                               const bool free_transients,
-                               const arguments args);
+                               const bool free_transients);
 std::unique_ptr<EV_Data> make_EV_GPU(const VE_Data & edgeTable,
                                      const vtkIdType n_points,
                                      const vtkIdType n_edges,
-                                     const bool free_transients,
-                                     const arguments args);
+                                     const bool free_transients);
 __global__ void EV_kernel(const vtkIdType * __restrict__ vertices,
                           const vtkIdType * __restrict__ edges,
                           const vtkIdType n_edges,
@@ -45,15 +43,13 @@ vtkIdType * make_TF_GPU_return(const TV_Data & TV,
                                const vtkIdType n_points,
                                const vtkIdType n_faces,
                                const vtkIdType n_cells,
-                               const bool free_transients,
-                               const arguments args);
+                               const bool free_transients);
 std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
                                      const VF_Data & VF,
                                      const vtkIdType n_points,
                                      const vtkIdType n_faces,
                                      const vtkIdType n_cells,
-                                     const bool free_transients,
-                                     const arguments args);
+                                     const bool free_transients);
 __global__ void TF_kernel(const vtkIdType * __restrict__ tv,
                           const vtkIdType * __restrict__ vertices,
                           const vtkIdType * __restrict__ faces,
@@ -68,15 +64,13 @@ vtkIdType * make_TE_GPU_return(const TV_Data & TV,
                                const vtkIdType n_points,
                                const vtkIdType n_edges,
                                const vtkIdType n_cells,
-                               const bool free_transients,
-                               const arguments args);
+                               const bool free_transients);
 std::unique_ptr<TE_Data> make_TE_GPU(const TV_Data & TV,
                                      const VE_Data & VE,
                                      const vtkIdType n_points,
                                      const vtkIdType n_edges,
                                      const vtkIdType n_cells,
-                                     const bool free_transients,
-                                     const arguments args);
+                                     const bool free_transients);
 __device__ void te_combine(vtkIdType quad0, vtkIdType quad1,
                            vtkIdType quad2, vtkIdType quad3,
                            const vtkIdType laneID,
@@ -97,13 +91,11 @@ __global__ void TE_kernel(const vtkIdType * __restrict__ tv,
 vtkIdType * make_FV_GPU_return(const VF_Data & VF,
                                const vtkIdType n_points,
                                const vtkIdType n_faces,
-                               const bool free_transients,
-                               const arguments args);
+                               const bool free_transients);
 std::unique_ptr<FV_Data> make_FV_GPU(const VF_Data & VF,
                                      const vtkIdType n_points,
                                      const vtkIdType n_faces,
-                                     const bool free_transients,
-                                     const arguments args);
+                                     const bool free_transients);
 __global__ void FV_kernel(const vtkIdType * __restrict__ vertices,
                           const vtkIdType * __restrict__ faces,
                           const vtkIdType n_faces,
@@ -114,15 +106,13 @@ vtkIdType * make_FE_GPU_return(const VF_Data & VF,
                                const vtkIdType n_points,
                                const vtkIdType n_edges,
                                const vtkIdType n_faces,
-                               const bool free_transients,
-                               const arguments args);
+                               const bool free_transients);
 std::unique_ptr<FE_Data> make_FE_GPU(const VF_Data & VF,
                                      const VE_Data & VE,
                                      const vtkIdType n_points,
                                      const vtkIdType n_edges,
                                      const vtkIdType n_faces,
-                                     const bool free_transients,
-                                     const arguments args);
+                                     const bool free_transients);
 // No kernel yet -- To be implemented
 // VV = TV' x TV
 vtkIdType get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points);
@@ -130,13 +120,11 @@ device_VV * make_VV_GPU_return(const TV_Data & TV,
                                const vtkIdType n_cells,
                                const vtkIdType n_points,
                                const vtkIdType max_VV_guess,
-                               const bool free_transients,
-                               const arguments args);
+                               const bool free_transients);
 std::unique_ptr<VV_Data> make_VV_GPU(const TV_Data & TV,
                                      const vtkIdType n_cells,
                                      const vtkIdType n_points,
-                                     const bool free_transients,
-                                     const arguments args);
+                                     const bool free_transients);
 __global__ void VV_kernel(const vtkIdType * __restrict__ tv,
                           const vtkIdType n_cells,
                           const vtkIdType n_points,

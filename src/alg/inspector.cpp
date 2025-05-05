@@ -18,7 +18,7 @@
 #define MINIMUM_CLASS 2
 #define REGULAR_CLASS 3
 #define SADDLE_CLASS  4
-#define FORCED_BLOCK_IDX 4
+#define FORCED_BLOCK_IDX 667
 
 void critPointsCPU(const vtkIdType * __restrict__ VV,
                    const unsigned long long * __restrict__ VV_index,
@@ -27,10 +27,35 @@ void critPointsCPU(const vtkIdType * __restrict__ VV,
                    const vtkIdType max_VV_guess,
                    const double * __restrict__ scalar_values,
                    unsigned int * __restrict__ classes) {
+    std::cout << "Classify point " << FORCED_BLOCK_IDX
+              << " (connected to up to " << VV_index[FORCED_BLOCK_IDX]
+              << " points)" << std::endl;
+    std::set<vtkIdType> unique_vertices;
+    std::vector<vtkIdType> active_indices;
+    std::vector<bool> scalar_compare;
+    const vtkIdType my_1d = FORCED_BLOCK_IDX;
+    for (vtkIdType idx = 0; idx < VV_index[FORCED_BLOCK_IDX]; idx++) {
+        const vtkIdType my_2d = VV[(FORCED_BLOCK_IDX * max_VV_guess) + idx],
+                        classification = CLASSIFY;
+        if (unique_vertices.count(my_2d) == 1) {
+            continue;
+        }
+        unique_vertices.emplace(my_2d);
+        scalar_compare.emplace_back(classification == 1);
+        active_indices.emplace_back(idx);
+        std::cout << "Connection " << FORCED_BLOCK_IDX << " -> " << my_2d
+                  << " (Scalar relation: " << (classification == 1)
+                  << ")" << std::endl;
+        for (vtkIdType idx2 = 0; idx2 < VV_index[my_2d]; idx2++) {
+            std::cout << "\tPossible connection to point "
+                      << VV[(my_2d * max_VV_guess) + idx2] << std::endl;
+        }
+    }
+    /*
     const vtkIdType minTID = (max_VV_guess * FORCED_BLOCK_IDX),
                     maxTID = minTID + VV_index[FORCED_BLOCK_IDX],
                     my_1d = FORCED_BLOCK_IDX;
-    /* GPU VV is non-deterministic, output it */
+    / * GPU VV is non-deterministic, output it * /
     for (vtkIdType tid = minTID; tid < maxTID; tid++) {
         std::cerr << CYAN_COLOR << "VV[" << tid << "] = " << VV[tid]
                   << RESET_COLOR << std::endl;
@@ -53,7 +78,7 @@ void critPointsCPU(const vtkIdType * __restrict__ VV,
             continue;
         }
         // BEYOND THIS POINT, YOU ARE AN ACTUAL WORKER THREAD ON THE PROBLEM
-        /* critPointsA */
+        / * critPointsA * /
         // Classify yourself relative to your 1d point
         const vtkIdType my_class = CLASSIFY;
         if (scalar_values[my_2d] == scalar_values[my_1d]) {
@@ -82,7 +107,7 @@ void critPointsCPU(const vtkIdType * __restrict__ VV,
         // BEYOND THIS POINT, YOU ARE AN ACTUAL WORKER THREAD ON THE PROBLEM
         // Classify yourself relative to your 1d point
         const vtkIdType my_class = valences[tid];
-        /* critPointsB */
+        / * critPointsB * /
         const vtkIdType max_my_1d = (my_1d * max_VV_guess) + VV_index[my_1d];
         bool done = false, burdened = true;
         int inspect_step = 0;
@@ -129,7 +154,7 @@ void critPointsCPU(const vtkIdType * __restrict__ VV,
         }
     }
     vtkIdType tid = minTID;
-    /* critPointsC */
+    / * critPointsC * /
     // Limit classification to lowest-ranked thread for single write
     if (my_1d * max_VV_guess == tid) {
         const vtkIdType my_classes = my_1d*3;
@@ -140,9 +165,10 @@ void critPointsCPU(const vtkIdType * __restrict__ VV,
                   << " upper and " << lower << " lower" << std::endl;
         if (upper >= 1 && lower == 0) classes[my_classes+2] = MINIMUM_CLASS;
         else if (upper == 0 && lower >= 1) classes[my_classes+2] = MAXIMUM_CLASS;
-        else if (/* upper >= 1 and upper == lower /**/ upper == 1 && lower == 1 /**/) classes[my_classes+2] = REGULAR_CLASS;
+        else if (/ * upper >= 1 and upper == lower / ** / upper == 1 && lower == 1 / ** /) classes[my_classes+2] = REGULAR_CLASS;
         else classes[my_classes+2] = SADDLE_CLASS;
     }
+    */
 }
 
 void export_classes(unsigned int * classes, vtkIdType n_classes, arguments & args) {
@@ -248,7 +274,7 @@ int main(int argc, char *argv[]) {
         vv_index_flat[i] = (*VV)[i].size();
         for (vtkIdType x = 0; x < vv_index_flat[i]; x++) {
             vv_flat[(i*max_VV_guess)+x] = (*VV)[i][x];
-            std::cerr << "VV connects " << i << " to " << (*VV)[i][x] << std::endl;
+            //std::cerr << "VV connects " << i << " to " << (*VV)[i][x] << std::endl;
         }
     }
     double    *scalar_values = new double[scalars_size];
@@ -256,7 +282,7 @@ int main(int argc, char *argv[]) {
     for(vtkIdType i = 0; i < TV->nPoints; i++) {
         scalar_values[i] = TV->vertexAttributes[i];
         //std::cerr << "TV value for point " << i << ": " << TV->vertexAttributes[i] << std::endl;
-        std::cout << "A Scalar value for point " << i << ": " << scalar_values[i] << std::endl;
+        //std::cout << "A Scalar value for point " << i << ": " << scalar_values[i] << std::endl;
     }
     timer.tick_announce();
     timer.label_next_interval("Run " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm");
@@ -275,7 +301,7 @@ int main(int argc, char *argv[]) {
                   host_CPC);
     timer.tick_announce();
     timer.tick();
-    export_classes(host_CPC, TV->nPoints, args);
+    //export_classes(host_CPC, TV->nPoints, args);
     timer.tick_announce();
     if (host_CPC != nullptr) delete host_CPC;
     if (valences != nullptr) delete valences;

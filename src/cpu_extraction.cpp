@@ -94,11 +94,10 @@ vtkIdType make_VE(const TV_Data & tv_relationship, VE_Data & edgeTable) {
 // EV = VE'
 std::unique_ptr<EV_Data> elective_make_EV(const VE_Data & edgeTable,
                                           const vtkIdType n_points,
-                                          const vtkIdType n_edges,
-                                          const arguments args
+                                          const vtkIdType n_edges
                                          ) {
     std::unique_ptr<EV_Data> edgeList = std::make_unique<EV_Data>(n_edges);
-    #pragma omp parallel for num_threads(args.threadNumber)
+    //#pragma omp parallel for num_threads(args.threadNumber)
     for(vtkIdType i = 0; i < n_points; ++i) {
         for(const EdgeData &data : edgeTable[i]) {
             (*edgeList)[data.id] = {i, data.highVert};
@@ -108,12 +107,10 @@ std::unique_ptr<EV_Data> elective_make_EV(const VE_Data & edgeTable,
 }
 
 std::unique_ptr<ET_Data> elective_make_ET(const TE_Data & cellEdgeList,
-                                          const vtkIdType n_edges,
-                                          const arguments args
-                                         ) {
+                                          const vtkIdType n_edges) {
     std::unique_ptr<ET_Data> edgeStars = std::make_unique<ET_Data>(n_edges);
-    #pragma omp parallel for num_threads(args.threadNumber)
-    for(vtkIdType i = 0; i < cellEdgeList.size(); ++i) { // for each tetrahedron
+    //#pragma omp parallel for num_threads(args.threadNumber)
+    for(unsigned long long i = 0; i < cellEdgeList.size(); ++i) { // for each tetrahedron
         // std::array<vtkIdType,6> list of edges for tetra
         for(const vtkIdType eid : cellEdgeList[i]) { // for each edge
             (*edgeStars)[eid].emplace_back(i); // edge :: tetra
@@ -218,8 +215,7 @@ vtkIdType make_VF(const TV_Data & tv_relationship,
 
 // FV = VF'
 std::unique_ptr<FV_Data> elective_make_FV(const VF_Data & VF,
-                                          const vtkIdType n_faces,
-                                          const arguments args) {
+                                          const vtkIdType n_faces) {
     std::unique_ptr<FV_Data> vertexList = std::make_unique<FV_Data>(n_faces);
     // Vector (low-vertex-id) of vectors (faces)
     vtkIdType i = 0;
@@ -251,8 +247,7 @@ std::unique_ptr<FE_Data> elective_make_FE(const VF_Data & VF,
 }
 
 std::unique_ptr<VV_Data> elective_make_VV(const TV_Data & TV,
-                                          const vtkIdType n_points,
-                                          const arguments args) {
+                                          const vtkIdType n_points) {
     std::unique_ptr<VV_Data> adjacencies = std::make_unique<VV_Data>(n_points);
     // Vertices are adjacent to all other vertices in a cell they appear in
     // This is a once-over pass, just don't double-enter the data (common edge
@@ -276,7 +271,7 @@ std::unique_ptr<VV_Data> elective_make_VV(const TV_Data & TV,
                 }
             });
     // Possible global information: longest adjacency?
-    vtkIdType longest_adjacency = 0;
+    unsigned long long longest_adjacency = 0;
     for (const std::vector<vtkIdType>& list : (*adjacencies)) {
         if (list.size() > longest_adjacency) longest_adjacency = list.size();
     }

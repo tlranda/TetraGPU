@@ -10,5 +10,7 @@
 #include "cuda_extraction.h" // make_*_GPU() etc
 #include "validate.h" // Check Host-vs-Device answers on relationships
 
+#include <set>
+
 #endif
 

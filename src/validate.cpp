@@ -387,8 +387,7 @@ bool check_host_vs_device_TT(const TT_Data & host_TT, const TT_Data & device_TT)
                   n_printed = 0,
                   n_found = 0,
                   n_failures = 0,
-                  n_failures_before_early_exit = MAX_ERRORS,
-                  n_failures_to_print = MAX_TO_PRINT;
+                  n_failures_before_early_exit = MAX_ERRORS;
     for (const auto AdjArray : host_TT) {
         if (PRINT_PROGRESS && idx % 1000 == 0)
             std::cerr << INFO_EMOJI << "Process cell " << idx << "("
@@ -440,8 +439,7 @@ bool check_host_vs_device_FF(const FF_Data & host_FF, const FF_Data & device_FF)
                   n_printed = 0,
                   n_found = 0,
                   n_failures = 0,
-                  n_failures_before_early_exit = MAX_ERRORS,
-                  n_failures_to_print = MAX_TO_PRINT;
+                  n_failures_before_early_exit = MAX_ERRORS;
     for (const auto AdjArray : host_FF) {
         if (PRINT_PROGRESS && idx % 1000 == 0)
             std::cerr << INFO_EMOJI << "Process face " << idx << "("
@@ -493,8 +491,7 @@ bool check_host_vs_device_EE(const EE_Data & host_EE, const EE_Data & device_EE)
                   n_printed = 0,
                   n_found = 0,
                   n_failures = 0,
-                  n_failures_before_early_exit = MAX_ERRORS,
-                  n_failures_to_print = MAX_TO_PRINT;
+                  n_failures_before_early_exit = MAX_ERRORS;
     for (const auto AdjArray : host_EE) {
         if (PRINT_PROGRESS && idx % 1000 == 0)
             std::cerr << INFO_EMOJI << "Process edge " << idx << "("
@@ -549,8 +546,7 @@ bool check_host_vs_device_VV(const VV_Data & host_VV, const VV_Data & device_VV)
                   n_overages = 0,
                   n_sum_amount_over = 0,
                   n_biggest_over = 0,
-                  n_failures_before_early_exit = MAX_ERRORS,
-                  n_failures_to_print = MAX_TO_PRINT;
+                  n_failures_before_early_exit = MAX_ERRORS;
     for (const auto AdjArray : host_VV) {
         if (PRINT_PROGRESS && idx % 1000 == 0)
             std::cerr << INFO_EMOJI << "Process vertex " << idx << "("

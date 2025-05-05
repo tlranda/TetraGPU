@@ -4,8 +4,9 @@
  * a default argument value, you should hop over to include/datatypes.h.in!
 */
 
-std::string usage(char* argv0, const struct option* options,
-                  const arguments & args, const option_map & help_info,
+std::string usage(char* argv0,
+                  const struct option* options,
+                  const option_map & help_info,
                   const option_map & metavars) {
     // Stringify usage of arguments
     std::stringstream ss;
@@ -146,7 +147,6 @@ void parse(int argc, char *argv[], arguments& args) {
             case 'h':
                 std::string help = usage(argv[0],
                                          long_options,
-                                         args,
                                          help_info,
                                          metavars);
                 std::cout << help;
