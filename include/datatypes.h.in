@@ -3,6 +3,7 @@
 
 #include <vtkCellTypes.h> // VTK Id Types etc
 #include <bitset> // std::bitset
+#include <memory> // std::unique_ptr
 
 #cmakedefine VALIDATE_GPU
 
