@@ -41,12 +41,13 @@ execute_process(COMMAND hostname
 #        message("CUDA INSTALLATION NOT FOUND!")
 #        return()
 #    endif()
+set(CMAKE_CUDA_HOST_COMPILER "gcc")
+set(CMAKE_CXX_COMPILER "g++")
 include_directories(${CUDA_INCLUDE_DIRS})
 link_directories(${CUDA_LIBRARY_DIRS})
 #endif()
 
 # VTK Dependency
-find_package(VTK PATHS ~/usr/local)
 find_package(VTK)
 if(NOT VTK_FOUND)
     message(FATAL_ERROR "VTK NOT FOUND! Set VTK_DIR environment variable to manually identify it")
