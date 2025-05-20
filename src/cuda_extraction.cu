@@ -1085,7 +1085,10 @@ device_VV * make_VV_GPU_return(const TV_Data & TV,
                                const vtkIdType max_VV_guess,
                                const bool free_transients) {
     // Marshall data to GPU
-    if (device_TV == nullptr) make_TV_for_GPU(TV);
+    if (device_TV == nullptr) {
+        make_TV_for_GPU(TV);
+        // If max_VV_guess isn't set ahead of time, this could be problematic
+    }
 
     // Compute the relationship
     size_t vv_size = sizeof(vtkIdType) * n_points * max_VV_guess,
