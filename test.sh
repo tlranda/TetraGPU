@@ -11,6 +11,7 @@
 # TETRA_CMAKE_ARGS := Additional arguments to CMake (ie: -DCMAKE_CUDA_HOST_COMPILER, -DCMake_CXX_COMPILER)
 # EXE := The filename used for binary export
 # MAIN := The main driver file to use
+# COMPILE_ONLY := Only run cmake wrt other arguments, do not execute the program
 
 validate="${VALIDATE-0}";
 echo "validate='${validate}'";
@@ -26,6 +27,8 @@ exe="${EXE-0}";
 echo "exe='${exe}'";
 main="${MAIN-0}";
 echo "main='${main}'";
+compile_only="${COMPILE_ONLY-0}";
+echo "compile_only='${compile_only}'";
 
 if [ $# -eq 0 ]; then
     set -- "${@:1}" "Bucket.vtu";
@@ -85,9 +88,12 @@ if [ $? -ne 0 ]; then
     exit;
 fi
 
-cd ${build_dir} && make;
+cd ${build_dir} && make VERBOSE=1;
 if [ $? -ne 0 ]; then
     echo "Make return $?";
+    exit;
+fi
+if [[ "${compile_only}" != "" ]]; then
     exit;
 fi
 cd ..;
