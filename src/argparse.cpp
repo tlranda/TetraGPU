@@ -71,6 +71,7 @@ void parse(int argc, char *argv[], arguments& args) {
         #ifdef VALIDATE_GPU
         {"validate", no_argument, &arg_flags[0], 1},
         #endif
+        {"arrayname", required_argument, 0, 'a'},
         {"build_TE", no_argument, &arg_flags[1], 1},
         {"build_EV", no_argument, &arg_flags[2], 1},
         {"build_ET", no_argument, &arg_flags[3], 1},
@@ -94,6 +95,7 @@ void parse(int argc, char *argv[], arguments& args) {
         #ifdef VALIDATE_GPU
         {"validate", "Check GPU results using CPU"},
         #endif
+        {"arrayname", "Array to use for scalar data (as string name)"},
         {"build_TE", "Build the TE relationship"},
         {"build_EV", "Build the EV relationship"},
         {"build_ET", "Build the ET relationship"},
@@ -111,6 +113,7 @@ void parse(int argc, char *argv[], arguments& args) {
     const option_map metavars = {
         {"input", "input.vtu"},
         {"export", "classes.txt"},
+        {"arrayname", "my_scalar_data_name"},
     };
     std::stringstream errors;
 
@@ -144,6 +147,9 @@ void parse(int argc, char *argv[], arguments& args) {
                        << argv[optind-1] << std::endl;
                 bad_args += 1;
                 break;
+            case 'a':
+                args.arrayname = std::string(optarg);
+                break;
             case 'h':
                 std::string help = usage(argv[0],
                                          long_options,
@@ -168,6 +174,9 @@ void parse(int argc, char *argv[], arguments& args) {
     std::cout << INFO_EMOJI << "Export: " << (args.export_ == "" ?
                                               "[n/a]" :
                                               args.export_) << std::endl;
+    std::cout << INFO_EMOJI << "Array name: " << (args.arrayname == "" ?
+                                                "[default to first array]" :
+                                                args.arrayname) << std::endl;
     // Set bit flags
     c = 0;
     for (int bit_value : arg_flags) {

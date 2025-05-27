@@ -135,10 +135,19 @@ std::unique_ptr<TV_Data> get_TV_from_VTK(const arguments args) {
         exit(EXIT_FAILURE);
     }
     std::cout << "Has " << pd->GetNumberOfArrays() << " arrays" << std::endl;
+    int use_this_array = -1;
     for (int i = 0; i < pd->GetNumberOfArrays(); i++) {
         std::cout << "\tArray " << i << " is named " << (pd->GetArrayName(i) ? pd->GetArrayName(i) : "NULL (not specified)") << std::endl;
+        if (use_this_array == -1 && args.arrayname != "" && pd->GetArrayName(i) == args.arrayname) {
+            use_this_array = i;
+            std::cout << "Found user's requested array:" << args.arrayname << std::endl;
+        }
     }
-    vtkDataArray* vertexAttributes = pd->GetArray(0);
+    if (use_this_array == -1) {
+        use_this_array = 0;
+        std::cout << "Auto select 0th array: " << pd->GetArrayName(0) << std::endl;
+    }
+    vtkDataArray* vertexAttributes = pd->GetArray(use_this_array);
     if (!vertexAttributes) {
         std::cerr << EXCLAIM_EMOJI << "No vertex attributes found in the dataset" << std::endl;
         exit(EXIT_FAILURE);

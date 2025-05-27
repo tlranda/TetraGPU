@@ -137,6 +137,7 @@ typedef struct argstruct {
     std::string fileName = "tiny.vtu";
     int threadNumber = 1;
     std::string export_ = "";
+    std::string arrayname = "";
     // Endian-ness may mean defaults need to be set in LSB->MSB order
     // TE starts on 3rd LSB
     std::bitset<14> arg_flags{"10000000000001"};
