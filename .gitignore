@@ -39,4 +39,7 @@ build_*/
 
 # Don't track the shifting main file
 src/main.cu
-
+*.nsys-rep
+*.sqlite
+verify/
+*_outputs/

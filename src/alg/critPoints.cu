@@ -292,6 +292,11 @@ int main(int argc, char *argv[]) {
     timer.tick();
     timer.interval("Argument parsing");
 
+    // Always create a context
+    timer.label_next_interval(RED_COLOR "Create CUDA Context" RESET_COLOR);
+    timer.tick();
+    (void)cudaFree(0);
+    timer.tick_announce();
     // GPU initialization
     if (! args.validate()) {
         timer.label_next_interval("GPU context creation with dummy kernel");
@@ -346,6 +351,7 @@ int main(int argc, char *argv[]) {
     CUDA_ASSERT(cudaMalloc((void**)&device_TV, tv_flat_size));
     vtkIdType * host_flat_tv = nullptr;
     CUDA_ASSERT(cudaMallocHost((void**)&host_flat_tv, tv_flat_size));
+    //host_flat_tv = (vtkIdType*) malloc(tv_flat_size);
     vtkIdType * vv_computed = nullptr;
     unsigned long long int * vv_index = nullptr;
     CUDA_ASSERT(cudaMalloc((void**)&vv_computed, vv_size));
@@ -358,19 +364,24 @@ int main(int argc, char *argv[]) {
     double    *scalar_values = nullptr,
               *device_scalar_values = nullptr;
     CUDA_ASSERT(cudaMallocHost((void**)&host_CPC, classes_size));
+    //host_CPC = (unsigned int*) malloc(classes_size);
     CUDA_ASSERT(cudaMalloc((void**)&device_CPC, classes_size));
     CUDA_ASSERT(cudaMalloc((void**)&device_valences, valences_size));
     CUDA_ASSERT(cudaMallocHost((void**)&scalar_values, scalars_size));
+    //scalar_values = (double*) malloc(scalars_size);
     CUDA_ASSERT(cudaMalloc((void**)&device_scalar_values, scalars_size));
 
     // These used to be ephemeral in a context
     vtkIdType * vv_host = nullptr;
     CUDA_ASSERT(cudaMallocHost((void**)&vv_host, vv_size));
-    unsigned long long int * vv_index_host = nullptr;
-    CUDA_ASSERT(cudaMallocHost((void**)&vv_index_host, vv_index_size));
-    vtkIdType * valences = nullptr;
-    CUDA_ASSERT(cudaMallocHost((void**)&valences, valences_size));
+    //vv_host = (vtkIdType*) malloc(vv_size);
     timer.tick_announce();
+    std::cout << INFO_EMOJI << "Memory footprint: " << (tv_flat_size+
+            classes_size+scalars_size+vv_size+vv_index_size+valences_size) / static_cast<float>(1024*1024*1024) <<
+        " GiB" << std::endl;
+    std::cout << INFO_EMOJI << "Memory demand: " << (tv_flat_size+
+            scalars_size+vv_size) / static_cast<float>(1024*1024*1024) <<
+        " GiB" << std::endl;
 
     // Usually VE and VF are also mandatory, but CritPoints does not require
     // these relationships! Skip them!
@@ -399,12 +410,6 @@ int main(int argc, char *argv[]) {
         /* BLOCKING COPY -- So we can free the host side data safely */
         CUDA_WARN(cudaMemcpyAsync(vv_computed, vv_host, vv_size, cudaMemcpyHostToDevice));
     }
-    // Pre-populate vv_index!
-    {
-        for(vtkIdType i = 0; i < TV->nPoints; i++) vv_index_host[i] = 0;
-        /* BLOCKING COPY -- So we can free the host side data safely */
-        CUDA_WARN(cudaMemcpyAsync(vv_index, vv_index_host, vv_index_size, cudaMemcpyHostToDevice));
-    }
     std::cout << INFO_EMOJI << "Kernel launch configuration is " << grid_size.x
               << " grid blocks with " << thread_block_size.x << " threads per block"
               << std::endl;
@@ -422,13 +427,8 @@ int main(int argc, char *argv[]) {
                                 vv_index,
                                 vv_computed));
     // Things for Critical points to overlap with VV above
-    // Pre-populate valences as zeros and populate scalar values
+    // Pre-populate scalar values
     {
-        for(unsigned long long i = 0; i < valences_size / sizeof(vtkIdType); i++) {
-            valences[i] = 0;
-        }
-        CUDA_WARN(cudaMemcpyAsync(device_valences, valences, valences_size, cudaMemcpyHostToDevice));
-
         // Scalar values from VTK
         for(vtkIdType i = 0; i < TV->nPoints; i++) {
             scalar_values[i] = TV->vertexAttributes[i];
@@ -436,12 +436,6 @@ int main(int argc, char *argv[]) {
             //std::cout << "A Scalar value for point " << i << ": " << scalar_values[i] << std::endl;
         }
         CUDA_WARN(cudaMemcpyAsync(device_scalar_values, scalar_values, scalars_size, cudaMemcpyHostToDevice));
-
-        // Class values
-        for (vtkIdType i = 0; i < TV->nPoints * 3; i++) {
-            host_CPC[i] = 0;
-        }
-        CUDA_WARN(cudaMemcpyAsync(device_CPC, host_CPC, classes_size, cudaMemcpyHostToDevice));
     }
     CUDA_WARN(cudaDeviceSynchronize());
     kernel.tick();
@@ -482,17 +476,8 @@ int main(int argc, char *argv[]) {
     timer.label_next_interval("Retrieve results from GPU");
     timer.tick();
     CUDA_WARN(cudaMemcpy(host_CPC, device_CPC, classes_size, cudaMemcpyDeviceToHost));
-    CUDA_WARN(cudaMemcpy(valences, device_valences, valences_size, cudaMemcpyDeviceToHost));
     timer.tick();
     timer.label_next_interval("Export results from " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm");
-    /* DEBUG CHECK VALENCES
-    for (int i = 0; i < TV->nPoints; i++) {
-        for (int j = 0; j < max_VV_guess; j++) {
-            std::cerr << "Valence point " << i << " entry " << j << ": "
-                      << valences[(i*max_VV_guess)+j] << std::endl;
-        }
-    }
-    */
     timer.tick();
     export_classes(host_CPC,
                    #if CONSTRAIN_BLOCK
@@ -504,15 +489,17 @@ int main(int argc, char *argv[]) {
     timer.label_next_interval("Free memory");
     timer.tick();
     if (host_CPC != nullptr) CUDA_WARN(cudaFreeHost(host_CPC));
+    //if (host_CPC != nullptr) free(host_CPC);
     if (device_CPC != nullptr) CUDA_WARN(cudaFree(device_CPC));
-    if (valences != nullptr) CUDA_WARN(cudaFreeHost(valences));
     if (device_valences != nullptr) CUDA_WARN(cudaFree(device_valences));
     if (scalar_values != nullptr) CUDA_WARN(cudaFreeHost(scalar_values));
+    //if (scalar_values != nullptr) free(scalar_values);
     if (device_scalar_values != nullptr) CUDA_WARN(cudaFree(device_scalar_values));
     if (dvv != nullptr) free(dvv);
     CUDA_WARN(cudaFreeHost(host_flat_tv));
+    //free(host_flat_tv);
     if (vv_host != nullptr) CUDA_WARN(cudaFreeHost(vv_host));
-    if (vv_index_host != nullptr) CUDA_WARN(cudaFreeHost(vv_index_host));
+    //if (vv_host != nullptr) free(vv_host);
     timer.tick_announce();
 }
 
