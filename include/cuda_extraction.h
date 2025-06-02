@@ -8,7 +8,7 @@
 #include "metrics.h" // timer
 
 // MAKE PRECOMPUTED DATA AVAILABLE ON GPU
-extern vtkIdType * device_TV;
+extern int * device_TV;
 void make_TV_for_GPU(const TV_Data & tv_relationship);
 
 extern vtkIdType * device_VE_vertices, * device_VE_edges,
@@ -50,7 +50,7 @@ std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
                                      const vtkIdType n_faces,
                                      const vtkIdType n_cells,
                                      const bool free_transients);
-__global__ void TF_kernel(const vtkIdType * __restrict__ tv,
+__global__ void TF_kernel(const int * __restrict__ tv,
                           const vtkIdType * __restrict__ vertices,
                           const vtkIdType * __restrict__ faces,
                           const vtkIdType * __restrict__ first_faces,
@@ -79,7 +79,7 @@ __device__ void te_combine(vtkIdType quad0, vtkIdType quad1,
                            const vtkIdType * __restrict__ edges,
                            const vtkIdType n_points,
                            const vtkIdType * __restrict__ index);
-__global__ void TE_kernel(const vtkIdType * __restrict__ tv,
+__global__ void TE_kernel(const int * __restrict__ tv,
                           const vtkIdType * __restrict__ vertices,
                           const vtkIdType * __restrict__ edges,
                           const vtkIdType * __restrict__ first_index,
@@ -115,22 +115,22 @@ std::unique_ptr<FE_Data> make_FE_GPU(const VF_Data & VF,
                                      const bool free_transients);
 // No kernel yet -- To be implemented
 // VV = TV' x TV
-vtkIdType get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points);
+int get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points);
 device_VV * make_VV_GPU_return(const TV_Data & TV,
-                               const vtkIdType n_cells,
-                               const vtkIdType n_points,
-                               const vtkIdType max_VV_guess,
+                               const int n_cells,
+                               const int n_points,
+                               const int max_VV_guess,
                                const bool free_transients);
 std::unique_ptr<VV_Data> make_VV_GPU(const TV_Data & TV,
-                                     const vtkIdType n_cells,
-                                     const vtkIdType n_points,
+                                     const int n_cells,
+                                     const int n_points,
                                      const bool free_transients);
-__global__ void VV_kernel(const vtkIdType * __restrict__ tv,
-                          const vtkIdType n_cells,
-                          const vtkIdType n_points,
-                          const vtkIdType offset,
-                          unsigned long long int * __restrict__ index,
-                          vtkIdType * __restrict__ vv);
+__global__ void VV_kernel(const int * __restrict__ tv,
+                          const int n_cells,
+                          const int n_points,
+                          const int offset,
+                          unsigned int * __restrict__ index,
+                          int * __restrict__ vv);
 
 device_VT * make_VT_GPU_return(const TV_Data & TV);
 device_VT * make_VT_GPU_return(const VT_Data & VT);

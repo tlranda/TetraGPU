@@ -59,7 +59,7 @@
         yet.
 */
 
-vtkIdType * device_TV = nullptr;
+int * device_TV = nullptr;
 void make_TV_for_GPU(const TV_Data & tv_relationship) {
     // You should not double-call this! Re-use existing results!
     if (device_TV != nullptr) {
@@ -68,16 +68,16 @@ void make_TV_for_GPU(const TV_Data & tv_relationship) {
         exit(EXIT_FAILURE);
     }
     // Size determination
-    size_t tv_flat_size = sizeof(vtkIdType) * tv_relationship.nCells * nbVertsInCell;
+    size_t tv_flat_size = sizeof(int) * tv_relationship.nCells * nbVertsInCell;
     // Allocations
     CUDA_ASSERT(cudaMalloc((void**)&device_TV, tv_flat_size));
-    vtkIdType * host_flat_tv = nullptr;
+    int * host_flat_tv = nullptr;
     CUDA_ASSERT(cudaMallocHost((void**)&host_flat_tv, tv_flat_size));
 
     // Set contiguous data in host memory
-    vtkIdType index = 0;
+    int index = 0;
     for (const auto & VertList : tv_relationship)
-        for (const vtkIdType vertex : VertList)
+        for (const int vertex : VertList)
             host_flat_tv[index++] = vertex;
     // Device copy and host free
     // BLOCKING -- provide barrier if made asynchronous to avoid free of host
@@ -350,7 +350,7 @@ std::unique_ptr<EV_Data> make_EV_GPU(const VE_Data & edgeTable,
     return edgeList;
 }
 
-__global__ void TF_kernel(const vtkIdType * __restrict__ tv,
+__global__ void TF_kernel(const int * __restrict__ tv,
                           const vtkIdType * __restrict__ vertices,
                           const vtkIdType * __restrict__ faces,
                           const vtkIdType * __restrict__ first_faces,
@@ -550,7 +550,7 @@ __device__ __inline__ void te_combine(vtkIdType quad0, vtkIdType quad1,
 }
 
 #define TE_CELLS_PER_BLOCK 195
-__global__ void TE_kernel(const vtkIdType * __restrict__ tv,
+__global__ void TE_kernel(const int * __restrict__ tv,
                           const vtkIdType * __restrict__ vertices,
                           const vtkIdType * __restrict__ edges,
                           const vtkIdType * __restrict__ first_index,
@@ -963,17 +963,17 @@ std::unique_ptr<ET_Data> make_ET_GPU(const TV_Data & TV,
     return edgeToCell;
 }
 
-__global__ void VV_kernel(const vtkIdType * __restrict__ tv,
-                          const vtkIdType n_cells,
-                          const vtkIdType n_points,
-                          const vtkIdType offset,
-                          unsigned long long int * __restrict__ index,
-                          vtkIdType * __restrict__ vv) {
-    vtkIdType tid = (blockDim.x * blockIdx.x) + threadIdx.x;
+__global__ void VV_kernel(const int * __restrict__ tv,
+                          const int n_cells,
+                          const int n_points,
+                          const int offset,
+                          unsigned int * __restrict__ index,
+                          int * __restrict__ vv) {
+    int tid = (blockDim.x * blockIdx.x) + threadIdx.x;
     if (tid >= (n_cells * nbVertsInCell)) return;
 
     // Mark yourself as adjacent to other cells alongside you
-    vtkIdType cell_vertex = tv[tid], v0, v1, v2, v3;
+    int cell_vertex = tv[tid], v0, v1, v2, v3;
     // Use register exchanges within a warp to get all other values
     v0 = __shfl_sync(0xffffffff, cell_vertex, 0, 4);
     v1 = __shfl_sync(0xffffffff, cell_vertex, 1, 4);
@@ -1000,7 +1000,7 @@ __global__ void VV_kernel(const vtkIdType * __restrict__ tv,
     // of this approach
     bool logged = false;
     if (v0 != cell_vertex) {
-        for (vtkIdType i = 0; i < index[cell_vertex]; i++) {
+        for (int i = 0; i < index[cell_vertex]; i++) {
             if (vv[cell_vertex*offset+i] == v0) {
                 logged = true;
                 break;
@@ -1014,7 +1014,7 @@ __global__ void VV_kernel(const vtkIdType * __restrict__ tv,
     // Repeat for v1
     if (v1 != cell_vertex) {
         logged = false;
-        for (vtkIdType i = 0; i < index[cell_vertex]; i++) {
+        for (int i = 0; i < index[cell_vertex]; i++) {
             if (vv[cell_vertex*offset+i] == v1) {
                 logged = true;
                 break;
@@ -1028,7 +1028,7 @@ __global__ void VV_kernel(const vtkIdType * __restrict__ tv,
     // Repeat for v2
     if (v2 != cell_vertex) {
         logged = false;
-        for (vtkIdType i = 0; i < index[cell_vertex]; i++) {
+        for (int i = 0; i < index[cell_vertex]; i++) {
             if (vv[cell_vertex*offset+i] == v2) {
                 logged = true;
                 break;
@@ -1042,7 +1042,7 @@ __global__ void VV_kernel(const vtkIdType * __restrict__ tv,
     // Repeat for v3
     if (v3 != cell_vertex) {
         logged = false;
-        for (vtkIdType i = 0; i < index[cell_vertex]; i++) {
+        for (int i = 0; i < index[cell_vertex]; i++) {
             if (vv[cell_vertex*offset+i] == v3) {
                 logged = true;
                 break;
@@ -1055,17 +1055,17 @@ __global__ void VV_kernel(const vtkIdType * __restrict__ tv,
     }
 }
 
-vtkIdType get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points) {
+int get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points) {
     // This calculation does NOT need to be exact, it needs to upper-bound
     // our memory usage. In order to do so, we count the largest number of
     // times a vertex appears in cells. In the WORST case scenario, this
     // vertex is the center-point of a "sphere" of cells which each have 3
     // unique vertices forming the rest of the cell, so 3*MAX(appear) is our
     // upper bound
-    std::vector<vtkIdType> appears(n_points, 0);
-    vtkIdType max = 0;
+    std::vector<int> appears(n_points, 0);
+    int max = 0;
     std::for_each(TV.begin(), TV.end(),
-            [&](const std::array<vtkIdType,nbVertsInCell>& cell) {
+            [&](const std::array<vtkIdType,nbVertsInCell> cell) {
                 for (const vtkIdType vertex : cell) {
                     // Max can never be off by more than one so just increment it
                     if (++appears[vertex] > max) max++;
@@ -1080,9 +1080,9 @@ vtkIdType get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points) {
 }
 
 device_VV * make_VV_GPU_return(const TV_Data & TV,
-                               const vtkIdType n_cells,
-                               const vtkIdType n_points,
-                               const vtkIdType max_VV_guess,
+                               const int n_cells,
+                               const int n_points,
+                               const int max_VV_guess,
                                const bool free_transients) {
     // Marshall data to GPU
     if (device_TV == nullptr) {
@@ -1091,31 +1091,15 @@ device_VV * make_VV_GPU_return(const TV_Data & TV,
     }
 
     // Compute the relationship
-    size_t vv_size = sizeof(vtkIdType) * n_points * max_VV_guess,
-           vv_index_size = sizeof(unsigned long long int) * n_points;
-    vtkIdType * vv_computed = nullptr;
-    unsigned long long int * vv_index = nullptr;
+    size_t vv_size = sizeof(int) * n_points * max_VV_guess,
+           vv_index_size = sizeof(unsigned int) * n_points;
+    int * vv_computed = nullptr;
+    unsigned int * vv_index = nullptr;
     CUDA_ASSERT(cudaMalloc((void**)&vv_computed, vv_size));
     CUDA_ASSERT(cudaMalloc((void**)&vv_index, vv_index_size));
     // Pre-populate vv!
-    {
-        vtkIdType * vv_host = nullptr;
-        CUDA_ASSERT(cudaMallocHost((void**)&vv_host, vv_size));
-        for(vtkIdType i=0; i < n_points*max_VV_guess; i++) vv_host[i] = -1;
-        /* BLOCKING COPY -- So we can free the host side data safely */
-        CUDA_WARN(cudaMemcpy(vv_computed, vv_host, vv_size, cudaMemcpyHostToDevice));
-        if (vv_host != nullptr) CUDA_WARN(cudaFreeHost(vv_host));
-    }
-    // Pre-populate vv_index!
-    {
-        unsigned long long int * vv_index_host = nullptr;
-        CUDA_ASSERT(cudaMallocHost((void**)&vv_index_host, vv_index_size));
-        for(vtkIdType i = 0; i < n_points; i++) vv_index_host[i] = 0;
-        /* BLOCKING COPY -- So we can free the host side data safely */
-        CUDA_WARN(cudaMemcpy(vv_index, vv_index_host, vv_index_size, cudaMemcpyHostToDevice));
-        if (vv_index_host != nullptr) CUDA_WARN(cudaFreeHost(vv_index_host));
-    }
-    vtkIdType n_to_compute = n_cells * nbVertsInCell;
+    CUDA_WARN(cudaMemset(vv_computed, -1, vv_size));
+    int n_to_compute = n_cells * nbVertsInCell;
     dim3 thread_block_size = 1024,
          grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
     std::cout << INFO_EMOJI << "Kernel launch configuration is " << grid_size.x
@@ -1145,19 +1129,19 @@ device_VV * make_VV_GPU_return(const TV_Data & TV,
     return vv;
 }
 std::unique_ptr<VV_Data> make_VV_GPU(const TV_Data & TV,
-                                     const vtkIdType n_cells,
-                                     const vtkIdType n_points,
+                                     const int n_cells,
+                                     const int n_points,
                                      const bool free_transients) {
     std::unique_ptr<VV_Data> vertex_adjacency = std::make_unique<VV_Data>();
     vertex_adjacency->resize(n_points); // RESIZE so we can emplace within VV_Data vectors
 
     // We kind of need to know the max-adjacency, but don't have to know it
     // precisely
-    vtkIdType max_VV_guess = get_approx_max_VV(TV, n_points);
+    int max_VV_guess = get_approx_max_VV(TV, n_points);
 
-    size_t vv_size = sizeof(vtkIdType) * n_points * max_VV_guess,
+    size_t vv_size = sizeof(int) * n_points * max_VV_guess,
            vv_index_size = sizeof(unsigned long long int) * n_points;
-    vtkIdType * vv_host = nullptr;
+    int * vv_host = nullptr;
     unsigned long long int * vv_index_host = nullptr;
     CUDA_ASSERT(cudaMallocHost((void**)&vv_host, vv_size));
     CUDA_ASSERT(cudaMallocHost((void**)&vv_index_host, vv_index_size));
@@ -1170,7 +1154,7 @@ std::unique_ptr<VV_Data> make_VV_GPU(const TV_Data & TV,
     kernel.label_prev_interval("GPU Device->Host transfer");
     kernel.tick();
     // Reconfigure for host-side structure
-    for (vtkIdType i = 0; i < n_points; i++) {
+    for (int i = 0; i < n_points; i++) {
         for (unsigned long long basis = i * max_VV_guess, j = 0; j < vv_index_host[i]; j++) {
             (*vertex_adjacency)[i].emplace_back(vv_host[basis+j]);
         }

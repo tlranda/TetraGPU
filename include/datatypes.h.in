@@ -83,13 +83,13 @@ struct TV_Data {
     }
 };
 typedef struct deviceVV {
-    vtkIdType * computed;
-    unsigned long long int * index;
+    int * computed;
+    unsigned int * index;
     deviceVV() {
         computed = nullptr;
         index = nullptr;
     }
-    deviceVV(vtkIdType * c, unsigned long long int * i) {
+    deviceVV(int * c, unsigned int * i) {
         computed = c; index = i;
     }
     /*
@@ -135,7 +135,7 @@ typedef std::vector<std::vector<vtkIdType>> TT_Data;
 // Argument values to be stored here, with defaults if they are optional
 typedef struct argstruct {
     std::string fileName = "tiny.vtu";
-    int threadNumber = 1;
+    int threadNumber = 1, max_VV = -1;
     std::string export_ = "";
     std::string arrayname = "";
     // Endian-ness may mean defaults need to be set in LSB->MSB order

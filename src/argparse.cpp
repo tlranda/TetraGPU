@@ -61,7 +61,7 @@ void parse(int argc, char *argv[], arguments& args) {
     // Disable getopt's automatic error messages so we can catch it via '?'
     opterr = 0;
     // Getopt option declarations
-    const char * optionstring = "hi:t:e:"
+    const char * optionstring = "hi:t:e:a:v:"
     ;
     static struct option long_options[] = {
         {"help", no_argument, 0, 'h'},
@@ -72,6 +72,7 @@ void parse(int argc, char *argv[], arguments& args) {
         {"validate", no_argument, &arg_flags[0], 1},
         #endif
         {"arrayname", required_argument, 0, 'a'},
+        {"max_VV", required_argument, 0, 'v'},
         {"build_TE", no_argument, &arg_flags[1], 1},
         {"build_EV", no_argument, &arg_flags[2], 1},
         {"build_ET", no_argument, &arg_flags[3], 1},
@@ -96,6 +97,7 @@ void parse(int argc, char *argv[], arguments& args) {
         {"validate", "Check GPU results using CPU"},
         #endif
         {"arrayname", "Array to use for scalar data (as string name)"},
+        {"max_VV", "Override estimation of max VV with integer value"},
         {"build_TE", "Build the TE relationship"},
         {"build_EV", "Build the EV relationship"},
         {"build_ET", "Build the ET relationship"},
@@ -114,6 +116,7 @@ void parse(int argc, char *argv[], arguments& args) {
         {"input", "input.vtu"},
         {"export", "classes.txt"},
         {"arrayname", "my_scalar_data_name"},
+        {"max_VV", "(INT>0, preferably multiple of 32)"}
     };
     std::stringstream errors;
 
@@ -150,6 +153,17 @@ void parse(int argc, char *argv[], arguments& args) {
             case 'a':
                 args.arrayname = std::string(optarg);
                 break;
+            case 'v':
+                args.max_VV = atoi(optarg);
+                if (args.max_VV <= 0) {
+                    std::cerr << "Max VV must be >= 1" << std::endl;
+                    bad_args += 1;
+                }
+                else if (args.max_VV % 32 != 0) {
+                    std::cerr << WARN_EMOJI << "Max VV is preferred to be a "
+                                               "multiple of 32!" << std::endl;
+                }
+                break;
             case 'h':
                 std::string help = usage(argv[0],
                                          long_options,
@@ -177,6 +191,10 @@ void parse(int argc, char *argv[], arguments& args) {
     std::cout << INFO_EMOJI << "Array name: " << (args.arrayname == "" ?
                                                 "[default to first array]" :
                                                 args.arrayname) << std::endl;
+    std::cout << INFO_EMOJI << "Max VV: " << (args.max_VV == -1 ?
+                                                "[Estimated from mesh]" :
+                                                std::to_string(args.max_VV))
+                            << std::endl;
     // Set bit flags
     c = 0;
     for (int bit_value : arg_flags) {

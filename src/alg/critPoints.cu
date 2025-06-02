@@ -16,12 +16,6 @@ __global__ void dummy_kernel(void) {
     //int tid = (blockIdx.x * blockDim.x) + threadIdx.x;
 }
 
-// For parity with Paraview, a tie needs to be broken by lower vertex ID being "lower" than the other one
-#define CLASSIFY const vtkIdType my_class = 1 - (\
-        (scalar_values[my_2d] == scalar_values[my_1d] ? \
-         my_2d < my_1d : \
-         scalar_values[my_2d] < scalar_values[my_1d]) \
-        << 1);
 #define MAXIMUM_CLASS 1
 #define MINIMUM_CLASS 2
 #define REGULAR_CLASS 3
@@ -30,42 +24,40 @@ __global__ void dummy_kernel(void) {
 #define TID_SELECTION (blockDim.x * blockIdx.x) + threadIdx.x
 #define PRINT_ON 0
 #define CONSTRAIN_BLOCK 0
-// DEBUG: Set grid size to one to only inspect a single block
-// BAD (regular -> 1-saddle): 667, 9361, 13566
-// BAD (regular -> 2-saddle): 9904, 10748, 10773, 10930, 10984, 10998, 11013, 11076, 11081, 11150, 11158, 11514, 11692, 13013, 13323, 14383
-#define FORCED_BLOCK_IDX 9904
 /*
+// Debugging specific block executions
+#define FORCED_BLOCK_IDX 9904
 #define TID_SELECTION (blockDim.x * FORCED_BLOCK_IDX) + threadIdx.x
 #define PRINT_ON 1
 #define CONSTRAIN_BLOCK 1
 */
 
 
-__global__ void critPointsA(const vtkIdType * __restrict__ VV,
-                           const unsigned long long * __restrict__ VV_index,
-                           vtkIdType * __restrict__ valences,
-                           const vtkIdType points,
-                           const vtkIdType max_VV_guess,
+__global__ void critPoints(const int * __restrict__ VV,
+                           const unsigned int * __restrict__ VV_index,
+                           int * __restrict__ valences,
+                           const int points,
+                           const int max_VV_guess,
                            const double * __restrict__ scalar_values,
                            unsigned int * __restrict__ classes) {
-    extern __shared__ unsigned long long block_shared[];
+    extern __shared__ unsigned int block_shared[];
 
-    unsigned long long *component_edits = &block_shared[0],
-                       *upper_edits = &block_shared[0],
-                       *lower_edits = &block_shared[1],
-                       *neighborhood = &block_shared[2];;
-    const vtkIdType tid = TID_SELECTION;
+    unsigned int *component_edits = &block_shared[0],
+                 *upper_edits = &block_shared[0],
+                 *lower_edits = &block_shared[1],
+                 *neighborhood = &block_shared[2];;
+    const int tid = TID_SELECTION;
     /*
         1) Parallelize VV on second-dimension (can early-exit block if no data
            available or if a prefix-scan of your primary-dimension list shows
            that you are a duplicate)
     */
-    const vtkIdType my_1d = tid / max_VV_guess,
-                    my_2d = VV[tid];
+    const int my_1d = tid / max_VV_guess,
+              my_2d = VV[tid];
     // No work for this point's valence
     if (VV_index[my_1d] <= 0 || my_2d < 0) return;
     // Prefix scan as anti-duplication
-    for (vtkIdType i = my_1d * max_VV_guess; i < tid; i++) {
+    for (int i = my_1d * max_VV_guess; i < tid; i++) {
         if (VV[i] == my_2d) return;
     }
 
@@ -78,15 +70,19 @@ __global__ void critPointsA(const vtkIdType * __restrict__ VV,
     */
     // Classify yourself as an upper or lower valence neighbor to your 1d point
     // Upper = -1, Lower = 1
-    CLASSIFY
+    // For parity with Paraview, a tie needs to be broken by lower vertex ID being "lower" than the other one
+    const int my_class = 1 - (
+                          (scalar_values[my_2d] == scalar_values[my_1d] ?
+                                my_2d < my_1d :
+                                scalar_values[my_2d] < scalar_values[my_1d])
+                           << 1);
     valences[tid] = my_class;
-    //printf("Block %d Thread %02d A valence (%lld,%lld) is %lld\n", blockIdx.x, threadIdx.x, my_1d, my_2d, my_class);
-    const vtkIdType min_my_1d = (my_1d * max_VV_guess),
-                    max_my_1d = min_my_1d + VV_index[my_1d];
+    const int min_my_1d = (my_1d * max_VV_guess),
+              max_my_1d = min_my_1d + VV_index[my_1d];
     neighborhood[threadIdx.x] = my_2d; // Initialize neighborhood with YOURSELF
     __syncthreads();
     #if PRINT_ON
-    printf("Block %d Thread %02d B init on my_1d %lld and my_2d %lld with valence %lld\n", blockIdx.x, threadIdx.x, my_1d, my_2d, my_class);
+    printf("Block %d Thread %02d B init on my_1d %d and my_2d %d with valence %d\n", blockIdx.x, threadIdx.x, my_1d, my_2d, my_class);
     #endif
     /*
         3) For all other threads sharing your neighborhood classification, scan
@@ -96,14 +92,12 @@ __global__ void critPointsA(const vtkIdType * __restrict__ VV,
            location in memory, you log +1 component of your type.
     */
     bool upper_converge = false, lower_converge = false;
-    int inspect_step = 0;
     // Repeat until both component directions converge
     while (!(upper_converge && lower_converge)) {
-        inspect_step++;
         // Sanity: Guarantee zero-init
         if (threadIdx.x == 0) {
             #if PRINT_ON
-            printf("Block %d Iteration %d: upper_edits %llu lower_edits %llu Neighborhood %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld\n",
+            printf("Block %d Iteration %d: upper_edits %u lower_edits %u Neighborhood %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
                     blockIdx.x, inspect_step, *upper_edits, *lower_edits,
                     neighborhood[0],
                     neighborhood[1],
@@ -142,26 +136,23 @@ __global__ void critPointsA(const vtkIdType * __restrict__ VV,
             *lower_edits = 0;
         }
         __syncthreads();
-        for(vtkIdType i = min_my_1d; i < max_my_1d; i++) {
+        for(int i = min_my_1d; i < max_my_1d; i++) {
             // Found same valence
-            const vtkIdType candidate_component_2d = VV[i];
+            const int candidate_component_2d = VV[i];
             if (i != tid && valences[i] == my_class) {
-                /*
-                printf("Block %d Thread %02d Inspect %02d Possible shared component with VV[%lld][%lld] (%lld)\n", blockIdx.x, threadIdx.x, inspect_step++, my_1d, i-(my_1d*max_VV_guess), candidate_component_2d);
-                */
                 // Find yourself in their adjacency to become a shared component and release burden
-                const vtkIdType start_2d = candidate_component_2d*max_VV_guess,
-                                stop_2d  = start_2d + VV_index[candidate_component_2d];
-                for(vtkIdType j = start_2d; j < stop_2d; j++) {
+                const int start_2d = candidate_component_2d*max_VV_guess,
+                          stop_2d  = start_2d + VV_index[candidate_component_2d];
+                for(int j = start_2d; j < stop_2d; j++) {
                     /* Do you see your 2d in their 2d? If so, update your
                        neighborhood with the minimum of your two points
                     */
-                    const vtkIdType theirNeighborhood = neighborhood[i-min_my_1d];
+                    const int theirNeighborhood = neighborhood[i-min_my_1d];
                     if (VV[j] == my_2d && neighborhood[threadIdx.x] > theirNeighborhood) {
                         neighborhood[threadIdx.x] = theirNeighborhood;
                         atomicAdd(component_edits+((my_class+1)/2), 1);
                         /*
-                        printf("Block %d Thread %02d Inspect %02d Shares component at VV[%lld][%lld] (%s)\n",
+                        printf("Block %d Thread %02d Inspect %02d Shares component at VV[%d][%d] (%s)\n",
                                 blockIdx.x, threadIdx.x, inspect_step, candidate_component_2d, j-(candidate_component_2d*max_VV_guess),
                                 my_class == -1 ? "Upper" : "Lower");
                         */
@@ -174,10 +165,10 @@ __global__ void critPointsA(const vtkIdType * __restrict__ VV,
         lower_converge = *lower_edits == 0;
     }
     if (neighborhood[threadIdx.x] == my_2d) { // You are the root of a component!
-        const vtkIdType memoffset = ((my_1d*3)+((my_class+1)/2));
+        const int memoffset = ((my_1d*3)+((my_class+1)/2));
         const unsigned int old = atomicAdd(classes+memoffset,1);
         #if PRINT_ON
-        printf("Block %d Thread %02d Writes %s component @ mem offset %lld (old: %u)\n", blockIdx.x, threadIdx.x, my_class == -1 ? "Upper" : "Lower", memoffset, old);
+        printf("Block %d Thread %02d Writes %s component @ mem offset %d (old: %u)\n", blockIdx.x, threadIdx.x, my_class == -1 ? "Upper" : "Lower", memoffset, old);
         #endif
     }
     __syncthreads();
@@ -188,11 +179,11 @@ __global__ void critPointsA(const vtkIdType * __restrict__ VV,
     */
     // Limit classification to lowest-ranked thread for single write
     if (threadIdx.x == 0) {
-        const vtkIdType my_classes = my_1d*3;
+        const int my_classes = my_1d*3;
         const unsigned int upper = classes[my_classes],
                            lower = classes[my_classes+1];
         #if PRINT_ON
-        printf("Block %d Thread %02d Verdict: my_1d (%lld) has %u upper and %u lower\n", blockIdx.x, threadIdx.x, my_1d, upper, lower);
+        printf("Block %d Thread %02d Verdict: my_1d (%d) has %u upper and %u lower\n", blockIdx.x, threadIdx.x, my_1d, upper, lower);
         #endif
         if (upper >= 1 && lower == 0) classes[my_classes+2] = MINIMUM_CLASS;
         else if (upper == 0 && lower >= 1) classes[my_classes+2] = MAXIMUM_CLASS;
@@ -264,16 +255,15 @@ void export_classes(unsigned int * classes,
     #endif
 }
 
-void * critPointsDriver(void *arg) {
-    int id = *(int *)arg;
-    // cudaStream_t thread_stream;
-    //CHECK_CUDA_ERROR(cudaStreamCreate(&thread_stream));
-    //CHECK_CUDA_ERROR(cudaStreamSynchronize(thread_stream));
-    //CHECK_CUDA_ERROR(cudaMemcpyAsync(device,host,size,direction,thread_stream));
-    //CHECK_CUDA_ERROR(cudaStreamSynchronize(thread_stream));
-    //KERNEL<<<grid,block,shmem,thread_stream>>>(ARGS);
-}
 /*
+void * critPointsDriver(void *arg) {
+   int id = *(int *)arg;
+   // cudaStream_t thread_stream;
+   //CHECK_CUDA_ERROR(cudaStreamCreate(&thread_stream));
+   //CHECK_CUDA_ERROR(cudaStreamSynchronize(thread_stream));
+   //CHECK_CUDA_ERROR(cudaMemcpyAsync(device,host,size,direction,thread_stream));
+   //CHECK_CUDA_ERROR(cudaStreamSynchronize(thread_stream));
+   //KERNEL<<<grid,block,shmem,thread_stream>>>(ARGS);
    int *tids = new int[n_threads];
    pthread_t *threads = new pthread_t[n_threads];
    for (int i = 0; i < n_threads; i++) {
@@ -283,6 +273,7 @@ void * critPointsDriver(void *arg) {
    for (int i = 0; i < n_threads; i++) {
     pthread_join(threads[i], NULL);
    }
+}
 */
 
 int main(int argc, char *argv[]) {
@@ -327,40 +318,50 @@ int main(int argc, char *argv[]) {
     // Have to make a max VV guess
     timer.label_next_interval("Approximate max VV");
     timer.tick();
-    vtkIdType max_VV_guess = get_approx_max_VV(*TV, TV->nPoints);
+    int max_VV_guess = args.max_VV;
+    if (max_VV_guess < 0) max_VV_guess = get_approx_max_VV(*TV, TV->nPoints);
     timer.tick_announce();
 
     timer.label_next_interval("Host-async size determination + allocations");
     timer.tick();
     // Size determinations
-    size_t tv_flat_size = sizeof(vtkIdType) * TV->nCells * nbVertsInCell,
-           vv_size = sizeof(vtkIdType) * TV->nPoints * max_VV_guess,
-           vv_index_size = sizeof(unsigned long long int) * TV->nPoints,
+    size_t tv_flat_size = sizeof(int) * TV->nCells * nbVertsInCell,
+           vv_size = sizeof(int) * TV->nPoints * max_VV_guess,
+           vv_index_size = sizeof(unsigned int) * TV->nPoints,
            // #Upper, #Lower, Classification
            classes_size = sizeof(unsigned int) * TV->nPoints * 3,
            // Upper/lower per adjacency
-           valences_size = sizeof(vtkIdType) * TV->nPoints * max_VV_guess,
+           valences_size = sizeof(int) * TV->nPoints * max_VV_guess,
            scalars_size = sizeof(double) * TV->nPoints;
-    vtkIdType n_to_compute = TV->nCells * nbVertsInCell;
+    int n_to_compute = TV->nCells * nbVertsInCell;
     dim3 thread_block_size = 1024,
          grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
-    const vtkIdType shared_mem_size = sizeof(unsigned long long) * (2+max_VV_guess);
+    const int shared_mem_size = sizeof(unsigned int) * (2+max_VV_guess);
+
+    // Announce expected sizes before possibly running OOM
+    std::cout << INFO_EMOJI << "Estimated memory footprint: " << (tv_flat_size+
+            classes_size+scalars_size+vv_size+vv_index_size+valences_size) / static_cast<float>(1024*1024*1024) <<
+        " GiB" << std::endl;
+    std::cout << INFO_EMOJI << "Estimated H->D memory demand: " << (tv_flat_size+
+            scalars_size) / static_cast<float>(1024*1024*1024) <<
+        " GiB" << std::endl;
+
 
     // Allocations
-    // in cuda_extraction.cu: vtkIdType * device_TV = nullptr;
+    // in cuda_extraction.cu: int * device_TV = nullptr;
     CUDA_ASSERT(cudaMalloc((void**)&device_TV, tv_flat_size));
-    vtkIdType * host_flat_tv = nullptr;
+    int * host_flat_tv = nullptr;
     CUDA_ASSERT(cudaMallocHost((void**)&host_flat_tv, tv_flat_size));
-    //host_flat_tv = (vtkIdType*) malloc(tv_flat_size);
-    vtkIdType * vv_computed = nullptr;
-    unsigned long long int * vv_index = nullptr;
+    //host_flat_tv = (int*) malloc(tv_flat_size);
+    int * vv_computed = nullptr;
+    unsigned int * vv_index = nullptr;
     CUDA_ASSERT(cudaMalloc((void**)&vv_computed, vv_size));
     CUDA_ASSERT(cudaMalloc((void**)&vv_index, vv_index_size));
     // CPC = actual critical points classifications
     // valences = adjacency upper/lower classification PRIOR to point classification
     unsigned int *host_CPC = nullptr,
                  *device_CPC = nullptr;
-    vtkIdType *device_valences = nullptr;
+    int *device_valences = nullptr;
     double    *scalar_values = nullptr,
               *device_scalar_values = nullptr;
     CUDA_ASSERT(cudaMallocHost((void**)&host_CPC, classes_size));
@@ -372,16 +373,7 @@ int main(int argc, char *argv[]) {
     CUDA_ASSERT(cudaMalloc((void**)&device_scalar_values, scalars_size));
 
     // These used to be ephemeral in a context
-    vtkIdType * vv_host = nullptr;
-    CUDA_ASSERT(cudaMallocHost((void**)&vv_host, vv_size));
-    //vv_host = (vtkIdType*) malloc(vv_size);
     timer.tick_announce();
-    std::cout << INFO_EMOJI << "Memory footprint: " << (tv_flat_size+
-            classes_size+scalars_size+vv_size+vv_index_size+valences_size) / static_cast<float>(1024*1024*1024) <<
-        " GiB" << std::endl;
-    std::cout << INFO_EMOJI << "Memory demand: " << (tv_flat_size+
-            scalars_size+vv_size) / static_cast<float>(1024*1024*1024) <<
-        " GiB" << std::endl;
 
     // Usually VE and VF are also mandatory, but CritPoints does not require
     // these relationships! Skip them!
@@ -393,23 +385,19 @@ int main(int argc, char *argv[]) {
     timer.tick();
 
     // Set contiguous data in host memory
-    vtkIdType index = 0;
+    int index = 0;
     for (const auto & VertList : (*TV))
-        for (const vtkIdType vertex : VertList)
+        for (const int vertex : VertList)
             host_flat_tv[index++] = vertex;
     // Device copy and host free
     // BLOCKING -- provide barrier if made asynchronous to avoid free of host
     // memory before copy completes
     CUDA_WARN(cudaMemcpyAsync(device_TV, host_flat_tv, tv_flat_size,
-                         cudaMemcpyHostToDevice));
+                              cudaMemcpyHostToDevice));
+    // Pre-populate vv!
+    CUDA_WARN(cudaMemset(vv_computed, -1, vv_size));
 
     // Compute the relationship
-    // Pre-populate vv!
-    {
-        for(vtkIdType i=0; i < TV->nPoints*max_VV_guess; i++) vv_host[i] = -1;
-        /* BLOCKING COPY -- So we can free the host side data safely */
-        CUDA_WARN(cudaMemcpyAsync(vv_computed, vv_host, vv_size, cudaMemcpyHostToDevice));
-    }
     std::cout << INFO_EMOJI << "Kernel launch configuration is " << grid_size.x
               << " grid blocks with " << thread_block_size.x << " threads per block"
               << std::endl;
@@ -430,7 +418,7 @@ int main(int argc, char *argv[]) {
     // Pre-populate scalar values
     {
         // Scalar values from VTK
-        for(vtkIdType i = 0; i < TV->nPoints; i++) {
+        for(int i = 0; i < TV->nPoints; i++) {
             scalar_values[i] = TV->vertexAttributes[i];
             //std::cerr << "TV value for point " << i << ": " << TV->vertexAttributes[i] << std::endl;
             //std::cout << "A Scalar value for point " << i << ": " << scalar_values[i] << std::endl;
@@ -461,7 +449,7 @@ int main(int argc, char *argv[]) {
     grid_size.x = 1;
     std::cerr << EXCLAIM_EMOJI << "DEBUG! Setting kernel size to 1 block (as block " << FORCED_BLOCK_IDX << ")" << std::endl;
     #endif
-    KERNEL_WARN(critPointsA<<<grid_size KERNEL_LAUNCH_SEPARATOR
+    KERNEL_WARN(critPoints<<<grid_size KERNEL_LAUNCH_SEPARATOR
                              thread_block_size KERNEL_LAUNCH_SEPARATOR
                              shared_mem_size>>>(dvv->computed,
                                                   dvv->index,
@@ -479,12 +467,18 @@ int main(int argc, char *argv[]) {
     timer.tick();
     timer.label_next_interval("Export results from " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm");
     timer.tick();
-    export_classes(host_CPC,
-                   #if CONSTRAIN_BLOCK
-                   #else
-                   TV->nPoints,
-                   #endif
-                   args);
+    if (args.export_ == "/dev/null") {
+        std::cerr << WARN_EMOJI << "Output to /dev/null omits function call entirely"
+                  << std::endl;
+    }
+    else {
+        export_classes(host_CPC,
+                       #if CONSTRAIN_BLOCK
+                       #else
+                       TV->nPoints,
+                       #endif
+                       args);
+    }
     timer.tick_announce();
     timer.label_next_interval("Free memory");
     timer.tick();
@@ -498,8 +492,6 @@ int main(int argc, char *argv[]) {
     if (dvv != nullptr) free(dvv);
     CUDA_WARN(cudaFreeHost(host_flat_tv));
     //free(host_flat_tv);
-    if (vv_host != nullptr) CUDA_WARN(cudaFreeHost(vv_host));
-    //if (vv_host != nullptr) free(vv_host);
     timer.tick_announce();
 }
 

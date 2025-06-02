@@ -15,11 +15,11 @@
 #include "validate.h" // Check Host-vs-Device answers on relationships
 #endif
 
-__global__ void critPoints(const vtkIdType * __restrict__ VV,
-                           const unsigned long long * __restrict__ VV_index,
-                           vtkIdType * __restrict__ valences,
-                           const vtkIdType points,
-                           const vtkIdType max_VV_guess,
+__global__ void critPoints(const int * __restrict__ VV,
+                           const unsigned int * __restrict__ VV_index,
+                           int * __restrict__ valences,
+                           const int points,
+                           const int max_VV_guess,
                            const double * __restrict__ scalar_values,
                            unsigned int * __restrict__ classes);
 
