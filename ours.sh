@@ -11,8 +11,8 @@
 override=0; # Set to 1 for override
 n_repeats=3; # Times to repeat each dataset
 
-cd /home/tlranda/grad/TetraGPU;
-source /home/tlranda/grad/TetraGPU/env.sh; # Modulefiles and list
+cd /home/tlranda/TetraTopo_GPU/TetraGPU;
+source env.sh; # Modulefiles and list
 
 # Set number of CPUs once
 ncpus=$( lscpu | grep -e "^CPU(s):" | awk '{print $NF}' );
@@ -35,6 +35,16 @@ declare -A target_array=( [datasets/Bucket.vtu]=Result
                           [datasets/Hole_100.vtu]=Result
                           [datasets/Stent_100.vtu]=Scalars_
                          );
+declare -A memory_limits=( [datasets/Bucket.vtu]=N
+                           [datasets/viscousFingering.vtu]=N
+                           [datasets/ctBones.vtu]=78
+                           [datasets/Engine_100.vtu]=N
+                           [datasets/Foot_100.vtu]=N
+                           [datasets/Fish_100.vtu]=N
+                           [datasets/Asteroid_100.vtu]=N
+                           [datasets/Hole_100.vtu]=151
+                           [datasets/Stent_100.vtu]=73
+                          );
 for ds in ${datasets[@]}; do
     echo "${ds}";
     shortname=$( basename ${ds} | tr "." "\n" | head -n 1 );
@@ -54,6 +64,11 @@ for ds in ${datasets[@]}; do
     # Array selected; proceed
     echo -e "\tUsing array: ${used_array}";
     cmd="./build_${HOSTNAME}/./main --input ${ds} --arrayname ${used_array} -t ${full_subscribe} --export /dev/null";
+    limit_size="${memory_limits[$ds]}";
+    if [[ "${limit_size}" != "N" ]]; then
+        cmd="${cmd} --max_VV ${limit_size}";
+        echo -e "\tLimiting max adjacency to ${limit_size}";
+    fi;
     for iteration in `seq 1 ${n_repeats}`; do
         to_make="${HOSTNAME}_outputs/${shortname}_${full_subscribe}CPUS_iter_${iteration}.output";
 	if [[ ! -e "${to_make}" || ${override} == 1 ]]; then
