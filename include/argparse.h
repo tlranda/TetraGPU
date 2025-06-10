@@ -7,6 +7,7 @@
 #include <map> // std::map
 #include <getopt.h> // getopt_long()
 #include <cstdlib>  // atoi
+#include <array> // std::array
 #include "datatypes.h" // arguments struct
 #include "emoji.h" // Emoji chars
 

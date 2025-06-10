@@ -16,6 +16,7 @@ endif (NOT VALIDATE_GPU)
 set(CMAKE_OUTPUT_NAME "main" CACHE STRING "Name of the output executable")
 add_executable(main ${sources})
 set_target_properties(main PROPERTIES OUTPUT_NAME ${CMAKE_OUTPUT_NAME})
+include_directories(${CMAKE_BINARY_DIR})
 
 # CUDA Dependency
 # N01 has a whack installation that has to be adjusted
@@ -59,6 +60,7 @@ message("VTK_DIR: ${VTK_DIR}")
 # C++ / CUDA settings
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CUDA_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_THREAD_LIBS_INIT "-lpthread")
 set(CMAKE_HAVE_THREADS_LIBRARY 1)
 set(CMAKE_USE_WIN32_THREADS_INIT 0)

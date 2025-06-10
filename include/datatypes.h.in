@@ -4,6 +4,7 @@
 #include <vtkCellTypes.h> // VTK Id Types etc
 #include <bitset> // std::bitset
 #include <memory> // std::unique_ptr
+#include <array>  // std::array
 
 #cmakedefine VALIDATE_GPU
 
