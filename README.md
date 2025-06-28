@@ -11,7 +11,7 @@ relationships necessary to test the initial hypotheses against select algorithms
 
 ### Requirements
 * CMake >= 3.12
-* [VTK == 9.3.1](htts://gitlab.kitware.com/vtk/vtk/-/tree/v9.3.1)
+* [VTK == 9.2.0](htts://gitlab.kitware.com/vtk/vtk/-/tree/v9.2.0)
 * NVIDIA GPU (Tested on minimum SM\_52 Compute-Capability @ CUDA 12.2.128)
 
 ### BASH Shell Environment
@@ -22,8 +22,8 @@ installed VTK base directory
 
 ### CMake Modifications
 * The included CMakeLists.txt should locate your CUDA installation normally,
-however if you have an install like mine that requires some hints on host
-compilers, you can replicate the structure for "n01" in the existing CMakeList
+however if your install requires modification, you may refer to the commented
+out section regarding "n01" in CMakeLists.txt
 
 ### Tetrahedral Dataset
 * Supply a VTK-compatible tetrahedral XML unstructured grid file (.vtu)
