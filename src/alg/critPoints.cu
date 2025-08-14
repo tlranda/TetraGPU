@@ -192,6 +192,21 @@ __global__ void critPoints(const int * __restrict__ VV,
     }
 }
 
+void unify_mesh_classes(const int * points_per_segment,
+			const int max_VV_guess,
+			const int ** VV_segments,
+			const int ** VV_indices,
+			unsigned int * unified_classes,
+			#if CONSTRAIN_BLOCK
+			#else
+			vtkIdType n_classes,
+			#endif
+			arguments & args) {
+	/* Combine multiple kernel results into a single class list for use in export_classes()
+	   Mostly expecting to need for duplicate answers on common boundaries between devices
+	   to need to be addressed, otherwise it's a simple merge. */
+}
+
 void export_classes(unsigned int * classes,
                     #if CONSTRAIN_BLOCK
                     #else
@@ -284,21 +299,36 @@ int main(int argc, char *argv[]) {
     timer.interval("Argument parsing");
 
     // Always create a context
-    timer.label_next_interval(RED_COLOR "Create CUDA Context" RESET_COLOR);
+    timer.label_next_interval(RED_COLOR "Create CUDA Contexts on all GPUs" RESET_COLOR);
     timer.tick();
-    (void)cudaFree(0);
+    int N_GPUS = 0;
+    cudaGetDeviceCount(&N_GPUS);
+    if (N_GPUS == 0) {
+        std::cout << ERROR_EMOJI << "No GPUs detected!" << std::endl;
+        return 1;
+    }
+    for (int i = 0; i < N_GPUS; i++) {
+        cudaSetDevice(i);
+        (void)cudaFree(0);
+    }
     timer.tick_announce();
     // GPU initialization
     if (! args.validate()) {
         timer.label_next_interval("GPU context creation with dummy kernel");
         timer.tick();
-        KERNEL_WARN(dummy_kernel<<<1 KERNEL_LAUNCH_SEPARATOR 1>>>());
-        CUDA_ASSERT(cudaDeviceSynchronize());
+        for (int i = 0; i < N_GPUS; i++) {
+	    cudaSetDevice(i);
+            KERNEL_WARN(dummy_kernel<<<1 KERNEL_LAUNCH_SEPARATOR 1>>>());
+            CUDA_ASSERT(cudaDeviceSynchronize());
+        }
         timer.tick_announce();
         timer.label_next_interval("GPU trivial kernel launch");
         timer.tick();
-        KERNEL_WARN(dummy_kernel<<<1 KERNEL_LAUNCH_SEPARATOR 1>>>());
-        CUDA_ASSERT(cudaDeviceSynchronize());
+	for (int i = 0; i < N_GPUS; i++) {
+	    cudaSetDevice(i);
+            KERNEL_WARN(dummy_kernel<<<1 KERNEL_LAUNCH_SEPARATOR 1>>>());
+            CUDA_ASSERT(cudaDeviceSynchronize());
+	}
         timer.tick_announce();
     }
 
@@ -310,6 +340,7 @@ int main(int argc, char *argv[]) {
     // Should utilize VTK API and then de-allocate all of its heap
     // Also loads the vertex attributes (host-side) and sets them in
     // TV->vertexAttributes (one scalar per vertex)
+    // TODO: Add N_GPUS argument and split data into a list of unique_ptrs to be allocated per device!
     std::unique_ptr<TV_Data> TV = get_TV_from_VTK(args); // args.filename
     timer.tick_announce();
 
@@ -319,12 +350,14 @@ int main(int argc, char *argv[]) {
     timer.label_next_interval("Approximate max VV");
     timer.tick();
     int max_VV_guess = args.max_VV;
+    // TODO: Parallelize this across unique_ptrs and get a different(?) max VV or unify max VV for easier coding elsewhere
     if (max_VV_guess < 0) max_VV_guess = get_approx_max_VV(*TV, TV->nPoints);
     timer.tick_announce();
 
     timer.label_next_interval("Host-async size determination + allocations");
     timer.tick();
     // Size determinations
+    // TODO: Need to be made per-device
     size_t tv_flat_size = sizeof(int) * TV->nCells * nbVertsInCell,
            vv_size = sizeof(int) * TV->nPoints * max_VV_guess,
            vv_index_size = sizeof(unsigned int) * TV->nPoints,
