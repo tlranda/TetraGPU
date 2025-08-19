@@ -8,7 +8,6 @@
 #include "metrics.h" // timer
 
 // MAKE PRECOMPUTED DATA AVAILABLE ON GPU
-extern int * device_TV;
 void make_TV_for_GPU(const TV_Data & tv_relationship);
 
 extern vtkIdType * device_VE_vertices, * device_VE_edges,
