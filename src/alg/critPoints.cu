@@ -549,7 +549,7 @@ int main(int argc, char *argv[]) {
         std::vector<unsigned int> deduped_length(TVs[i]->nPoints);
         std::vector<int> known_points(max_VV_guess);
         unsigned int max_maybe_duped_degree = 0, max_actual_degree = 0;
-        for (int j = 0; i < TVs[i]->nPoints; j++) {
+        for (int j = 0; j < TVs[i]->nPoints; j++) {
             known_points.clear();
             actual_size += host_vv_index[j];
             if (host_vv_index[j] > static_cast<unsigned int>(max_VV_guess)) {
