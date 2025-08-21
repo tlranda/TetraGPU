@@ -398,7 +398,7 @@ void * parallel_work(void *parallel_arguments) {
     char timername[32];
     sprintf(timername, "Parallel work %02d", gpu_id);
     Timer timer(false, timername);
-    cudaSetDevice(0); //gpu_id);
+    cudaSetDevice(gpu_id);
     // OPTIONAL: VV (yellow) [TV' x TV]
     // REQUIRED for CritPoints
     std::cout << PUSHPIN_EMOJI << "Using GPU " << gpu_id << " to compute " YELLOW_COLOR "VV" RESET_COLOR << std::endl;
@@ -641,8 +641,6 @@ int main(int argc, char *argv[]) {
         cudaSetDevice(i);
         (void)cudaFree(0);
     }
-    // PROTOTYPE: FAKE having 2 GPUs!
-    N_GPUS = 2;
     timer.tick_announce();
     // GPU initialization
     if (! args.validate()) {
@@ -737,7 +735,7 @@ int main(int argc, char *argv[]) {
     std::vector<double *> scalar_values(N_GPUS),
                           device_scalar_values(N_GPUS);
     for (int i = 0; i < N_GPUS; i++) {
-        cudaSetDevice(0); // SHOULD BE 'i'
+        cudaSetDevice(i); // SHOULD BE 'i'
         CUDA_ASSERT(cudaMalloc((void**)&device_TVs[i], tv_flat_size));
         CUDA_ASSERT(cudaMallocHost((void**)&host_flat_tvs[i], tv_flat_size));
         CUDA_ASSERT(cudaMalloc((void**)&vv_computeds[i], vv_size));
