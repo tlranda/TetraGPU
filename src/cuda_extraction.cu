@@ -956,7 +956,7 @@ std::unique_ptr<ET_Data> make_ET_GPU(const TV_Data & TV,
                                      const vtkIdType n_points,
                                      const vtkIdType n_edges,
                                      const bool free_transients,
-                                     const arguments args) {
+                                     const runtime_arguments args) {
     std::unique_ptr<ET_Data> edgeToCell = std::make_unique<ET_Data>();
     edgeToCell->reserve(n_edges);
     std::cerr << WARN_EMOJI << "Not implemented yet!" << std::endl;

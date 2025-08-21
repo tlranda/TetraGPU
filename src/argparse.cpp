@@ -49,7 +49,7 @@ std::string usage(char* argv0,
     return ss.str();
 }
 
-void parse(int argc, char *argv[], arguments& args) {
+void parse(int argc, char *argv[], runtime_arguments & args) {
     /*
      * Command-line parsing
      *

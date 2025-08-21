@@ -175,7 +175,16 @@ typedef struct argstruct {
     bool build_FF(void) const { return arg_flags[11]; }
     bool build_EE(void) const { return arg_flags[12]; }
     bool build_VV(void) const { return arg_flags[13]; }
-} arguments;
+    argstruct(void) {}
+    argstruct(const argstruct & other) {
+        fileName = other.fileName;
+        threadNumber = other.threadNumber;
+        max_VV = other.max_VV;
+        export_ = other.export_;
+        arrayname = other.arrayname;
+        arg_flags = other.arg_flags;
+    }
+} runtime_arguments;
 typedef std::map<const char*, std::string> option_map;
 
 #endif

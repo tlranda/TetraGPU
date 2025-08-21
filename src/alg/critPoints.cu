@@ -210,7 +210,7 @@ void unify_mesh_classes(const int * points_per_segment,
             #else
             vtkIdType n_classes,
             #endif
-            arguments & args) {
+            runtime_arguments & args) {
     /* Combine multiple kernel results into a single class list for use in export_classes()
        Mostly expecting to need for duplicate answers on common boundaries between devices
        to need to be addressed, otherwise it's a simple merge. */
@@ -221,7 +221,7 @@ void export_classes(unsigned int * classes,
                     #else
                     vtkIdType n_classes,
                     #endif
-                    arguments & args) {
+                    runtime_arguments & args) {
     std::ofstream output_fstream; // Used for file handle to indicated name
     std::streambuf * output_buffer; // Buffer may point to stdout or file handle
     if (args.export_ == "") {
@@ -292,6 +292,314 @@ void export_classes(unsigned int * classes,
     #endif
 }
 
+struct thread_arguments {
+    int gpu_id;
+    std::unique_ptr<TV_Data> TV;
+    int * host_flat_tv;
+    int * device_tv;
+    size_t tv_flat_size;
+    int * vv_computed;
+    unsigned int * vv_index;
+    size_t vv_size;
+    size_t vv_index_size;
+    double * scalar_values;
+    double * device_scalar_values;
+    size_t scalars_size;
+    int * device_valences;
+    size_t valences_size;
+    unsigned int * device_CPCs;
+    unsigned int * host_CPCs;
+    size_t classes_size;
+    int n_to_compute;
+    int max_VV_guess;
+    dim3 thread_block_size;
+    dim3 grid_size;
+    int shared_mem_size;
+    runtime_arguments args;
+
+    thread_arguments(void) { }
+    thread_arguments(
+        int gpu_id1,
+        std::unique_ptr<TV_Data> TV1,
+        int * host_flat_tv1,
+        int * device_tv1,
+        size_t tv_flat_size1,
+        int * vv_computed1,
+        unsigned int * vv_index1,
+        size_t vv_size1,
+        size_t vv_index_size1,
+        double * scalar_values1,
+        double * device_scalar_values1,
+        size_t scalars_size1,
+        int * device_valences1,
+        size_t valences_size1,
+        unsigned int * device_CPCs1,
+        unsigned int * host_CPCs1,
+        size_t classes_size1,
+        int n_to_compute1,
+        int max_VV_guess1,
+        dim3 thread_block_size1,
+        dim3 grid_size1,
+        int shared_mem_size1,
+        runtime_arguments args1) {
+            gpu_id = gpu_id1,
+            TV = std::move(TV1),
+            host_flat_tv = host_flat_tv1,
+            device_tv = device_tv1,
+            tv_flat_size = tv_flat_size1,
+            vv_computed = vv_computed1,
+            vv_index = vv_index1,
+            vv_size = vv_size1,
+            vv_index_size = vv_index_size1,
+            scalar_values = scalar_values1,
+            device_scalar_values = device_scalar_values1,
+            scalars_size = scalars_size1,
+            device_valences = device_valences1,
+            valences_size = valences_size1,
+            device_CPCs = device_CPCs1,
+            host_CPCs = host_CPCs1;
+            classes_size = classes_size1;
+            n_to_compute = n_to_compute1;
+            max_VV_guess = max_VV_guess1;
+            thread_block_size = thread_block_size1;
+            grid_size = grid_size1;
+            shared_mem_size = shared_mem_size1;
+            args = args1;
+    }
+};
+void * parallel_work(void *parallel_arguments) {
+    // Unpacking
+    thread_arguments *thread_args = (thread_arguments *)parallel_arguments;
+    const int gpu_id = thread_args->gpu_id;
+    const std::unique_ptr<TV_Data> TV = std::move(thread_args->TV);
+    int * host_flat_tv = thread_args->host_flat_tv;
+    int * device_tv = thread_args->device_tv;
+    const size_t tv_flat_size = thread_args->tv_flat_size;
+    int * vv_computed = thread_args->vv_computed;
+    unsigned int * vv_index = thread_args->vv_index;
+    const size_t vv_size = thread_args->vv_size;
+    const size_t vv_index_size = thread_args->vv_index_size;
+    double * scalar_values = thread_args->scalar_values;
+    double * device_scalar_values = thread_args->device_scalar_values;
+    const size_t scalars_size = thread_args->scalars_size;
+    int * device_valences = thread_args->device_valences;
+    const size_t valences_size = thread_args->valences_size;
+    unsigned int * device_CPCs = thread_args->device_CPCs;
+    unsigned int * host_CPCs = thread_args->host_CPCs;
+    const size_t classes_size = thread_args->classes_size;
+    int n_to_compute = thread_args->n_to_compute;
+    const int max_VV_guess = thread_args->max_VV_guess;
+    const int shared_mem_size = thread_args->shared_mem_size;
+    // why is this wrong
+    runtime_arguments _my_args = thread_args->args;
+    dim3 thread_block_size = thread_args->thread_block_size;
+    dim3 grid_size = thread_args->grid_size;
+
+    char timername[32];
+    sprintf(timername, "Parallel work %02d", gpu_id);
+    Timer timer(false, timername);
+    cudaSetDevice(0); //gpu_id);
+    // OPTIONAL: VV (yellow) [TV' x TV]
+    // REQUIRED for CritPoints
+    std::cout << PUSHPIN_EMOJI << "Using GPU " << gpu_id << " to compute " YELLOW_COLOR "VV" RESET_COLOR << std::endl;
+    timer.label_next_interval(YELLOW_COLOR "VV" RESET_COLOR " [GPU]");
+    timer.tick();
+    // Set contiguous data in host memory
+    int index = 0;
+    for (const auto & VertList : (*TV))
+        for (const int vertex : VertList)
+            host_flat_tv[index++] = vertex;
+    // Device copy and host free
+    // BLOCKING -- provide barrier if made asynchronous to avoid free of host
+    // memory before copy completes
+    CUDA_WARN(cudaMemcpyAsync(device_tv, host_flat_tv, tv_flat_size,
+                              cudaMemcpyHostToDevice));
+    // Pre-populate vv!
+    CUDA_WARN(cudaMemset(vv_computed, -1, vv_size));
+
+    // Compute the relationship
+    std::cout << INFO_EMOJI << "Kernel launch configuration is " << grid_size.x
+              << " grid blocks with " << thread_block_size.x << " threads per block"
+              << std::endl;
+    std::cout << INFO_EMOJI << "The mesh has " << TV->nCells << " cells and "
+              << TV->nPoints << " vertices" << std::endl;
+    std::cout << INFO_EMOJI << "Tids >= " << TV->nCells * nbVertsInCell
+              << " should auto-exit (" << (thread_block_size.x * grid_size.x) - n_to_compute
+              << ")" << std::endl;
+    Timer kernel(false, "VV_Kernel");
+    KERNEL_WARN(VV_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
+                            thread_block_size>>>(device_tv,
+                                TV->nCells,
+                                TV->nPoints,
+                                max_VV_guess,
+                                vv_index,
+                                vv_computed));
+    // Things for Critical points to overlap with VV above
+    // Pre-populate scalar values
+    {
+        // Scalar values from VTK
+        for(int j = 0; j < TV->nPoints; j++) {
+            scalar_values[j] = TV->vertexAttributes[j];
+            //std::cerr << "TV value for point " << j << ": " << TV->vertexAttributes[j] << std::endl;
+            //std::cout << "A Scalar value for point " << j << ": " << scalar_values[j] << std::endl;
+        }
+        CUDA_WARN(cudaMemcpyAsync(device_scalar_values, scalar_values, scalars_size, cudaMemcpyHostToDevice));
+    }
+    CUDA_WARN(cudaDeviceSynchronize());
+    kernel.tick();
+    kernel.label_prev_interval("GPU kernel duration");
+    CUDA_WARN(cudaFree(device_tv));
+    // Pack data and return
+    device_VV * dvv = new device_VV{vv_computed, vv_index};
+    timer.tick_announce();
+
+    // DEBUG FOR GALE INTEGRATION: Check VV ON HOST A BIT
+    /*
+    int * host_vv = nullptr;
+    unsigned int * host_vv_index = nullptr;
+    CUDA_ASSERT(cudaMallocHost((void**)&host_vv, vv_size));
+    CUDA_ASSERT(cudaMallocHost((void**)&host_vv_index, vv_index_size));
+    CUDA_WARN(cudaMemcpy(host_vv, vv_computed, vv_size, cudaMemcpyDeviceToHost));
+    CUDA_WARN(cudaMemcpy(host_vv_index, vv_index, vv_index_size, cudaMemcpyDeviceToHost));
+    int MAX_PRINT = 100;
+    for (int i = 0; i < 4; i++) {
+        std::cout << "Sanity check VV[" << i << "] with size " << host_vv_index[i] << std::endl;
+        int consecutive_minus_1 = 0;
+        for (int j = 0; j < max_VV_guess && MAX_PRINT > 0; j++) {
+            if (host_vv[(i*max_VV_guess)+j] == -1) {
+                consecutive_minus_1++;
+                continue;
+            }
+            else if (consecutive_minus_1 > 0) {
+                std::cout << "\t" << i << ": -1 (" << consecutive_minus_1 << " times)" << std::endl;
+            }
+            std::cout << "\t" << i << ": " << host_vv[(i*max_VV_guess)+j] << std::endl;
+            MAX_PRINT--;
+        }
+        if (consecutive_minus_1 > 0) {
+            std::cout << "\t" << i << ": (possibly not complete: " << consecutive_minus_1 << " consecutive leftover -1's)" << std::endl;
+        }
+    }
+    CUDA_ASSERT(cudaFreeHost(host_vv));
+    CUDA_ASSERT(cudaFreeHost(host_vv_index));
+    */
+    // DEBUG: Check lengths for threats to correctness / efficiency
+    timer.label_next_interval("Check for VV duplication / error");
+    timer.tick();
+    unsigned int * host_vv_index = nullptr;
+    CUDA_ASSERT(cudaMallocHost((void**)&host_vv_index, vv_index_size));
+    CUDA_WARN(cudaMemcpy(host_vv_index, vv_index, vv_index_size, cudaMemcpyDeviceToHost));
+    unsigned int duplicates = 0, minmax_size = 0, actual_size = 0;
+    std::vector<unsigned int> overflow = std::vector<unsigned int>();
+    int * host_vv = nullptr;
+    // Determine the real size of de-duplicated VV
+    CUDA_ASSERT(cudaMallocHost((void**)&host_vv, vv_size));
+    CUDA_WARN(cudaMemcpy(host_vv, vv_computed, vv_size, cudaMemcpyDeviceToHost));
+    std::vector<unsigned int> deduped_length(TV->nPoints);
+    std::vector<int> known_points(max_VV_guess);
+    unsigned int max_maybe_duped_degree = 0, max_actual_degree = 0;
+    for (int j = 0; j < TV->nPoints; j++) {
+        known_points.clear();
+        actual_size += host_vv_index[j];
+        if (host_vv_index[j] > static_cast<unsigned int>(max_VV_guess)) {
+            overflow.emplace_back(host_vv_index[j]-max_VV_guess);
+        }
+        if (host_vv_index[j] > max_maybe_duped_degree) {
+            max_maybe_duped_degree = host_vv_index[j];
+        }
+        for (unsigned int k = 0; k < host_vv_index[j]; k++) {
+            if (std::find(known_points.begin(), known_points.end(), host_vv[(j*max_VV_guess+k)]) == known_points.end()) {
+                known_points.emplace_back(host_vv[(j*max_VV_guess)+k]);
+            }
+            else {
+                duplicates++;
+            }
+        }
+        minmax_size += known_points.size();
+        if (known_points.size() > max_actual_degree) {
+            max_actual_degree = known_points.size();
+        }
+    }
+    if (overflow.size() > 0) {
+        std::cerr << WARN_EMOJI << "Detected " << overflow.size() << " points in VV that overflow the maximum adjacency limit!" << std::endl;
+        std::cerr << WARN_EMOJI << "Overflow amounts: ";
+        for (auto j : overflow) {
+            std::cerr << j << ", ";
+        }
+        std::cerr << std::endl;
+    }
+    else {
+        std::cerr << OK_EMOJI << "No overflow of VV detected" << std::endl;
+    }
+    if (duplicates > 0) {
+        std::cerr << WARN_EMOJI << "Detected " << duplicates << " VV duplicates (" << actual_size << " total entries, minimum count: " << minmax_size << " -- " << (actual_size/static_cast<float>(minmax_size))-1.0 << " proportionate extra)" << std::endl;
+    }
+    else {
+        std::cerr << OK_EMOJI << "No VV duplication detected. Minimum count: " << minmax_size << std::endl;
+    }
+    std::cerr << INFO_EMOJI << "Max VV was set to " << max_VV_guess << ". ACTUAL max VV is " << max_actual_degree << ", max utilized VV is " << max_maybe_duped_degree << std::endl;
+    timer.tick_announce();
+
+
+    // Critical Points
+    timer.label_next_interval("Run " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm");
+    // Set kernel launch parameters here
+    /*
+        1) Parallelize VV on second-dimension (can early-exit block if no data
+           available or if a prefix-scan of your primary-dimension list shows
+           that you are a duplicate)
+    */
+    timer.tick();
+    n_to_compute = TV->nPoints * max_VV_guess;
+    thread_block_size.x = max_VV_guess;
+    grid_size.x = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
+    #if CONSTRAIN_BLOCK
+    grid_size.x = 1;
+    std::cerr << EXCLAIM_EMOJI << "DEBUG! Setting kernel size to 1 block (as block " << FORCED_BLOCK_IDX << ")" << std::endl;
+    #endif
+    KERNEL_WARN(critPoints<<<grid_size KERNEL_LAUNCH_SEPARATOR
+                             thread_block_size KERNEL_LAUNCH_SEPARATOR
+                             shared_mem_size>>>(dvv->computed,
+                                                  dvv->index,
+                                                  device_valences,
+                                                  TV->nPoints,
+                                                  max_VV_guess,
+                                                  device_scalar_values,
+                                                  device_CPCs));
+    CUDA_WARN(cudaDeviceSynchronize()); // Make algorithm timing accurate
+    timer.tick_announce();
+    timer.label_next_interval("Retrieve results from GPU");
+    timer.tick();
+    CUDA_WARN(cudaMemcpy(host_CPCs, device_CPCs, classes_size, cudaMemcpyDeviceToHost));
+    timer.tick();
+    timer.label_next_interval("Export results from " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm");
+    timer.tick();
+    if (_my_args.export_ == "/dev/null") {
+        std::cerr << WARN_EMOJI << "Output to /dev/null omits function call entirely"
+                  << std::endl;
+    }
+    else {
+        export_classes(host_CPCs,
+                       #if CONSTRAIN_BLOCK
+                       #else
+                       TV->nPoints,
+                       #endif
+                       _my_args);
+    }
+    timer.tick_announce();
+    timer.label_next_interval("Free memory");
+    timer.tick();
+    if (dvv != nullptr) free(dvv);
+    if (host_CPCs != nullptr) CUDA_WARN(cudaFreeHost(host_CPCs));
+    if (device_CPCs != nullptr) CUDA_WARN(cudaFree(device_CPCs));
+    if (device_valences != nullptr) CUDA_WARN(cudaFree(device_valences));
+    if (scalar_values != nullptr) CUDA_WARN(cudaFreeHost(scalar_values));
+    if (device_scalar_values != nullptr) CUDA_WARN(cudaFree(device_scalar_values));
+    CUDA_WARN(cudaFreeHost(host_flat_tv));
+    //TVs[i].release();
+    timer.tick_announce();
+}
+
 /*
 void * critPointsDriver(void *arg) {
    int id = *(int *)arg;
@@ -315,7 +623,7 @@ void * critPointsDriver(void *arg) {
 
 int main(int argc, char *argv[]) {
     Timer timer(false, "Main");
-    arguments args;
+    runtime_arguments args;
     parse(argc, argv, args);
     timer.tick();
     timer.interval("Argument parsing");
@@ -448,209 +756,32 @@ int main(int argc, char *argv[]) {
 
     // TODO: Make this a function that you pthread/join so it is CPU-parallel to each GPU
     std::cout << WARN_EMOJI << "BEEG LOOP" << std::endl;
+    pthread_t threads[N_GPUS];
+    thread_arguments thread_args[N_GPUS];
     for (int i = 0; i < N_GPUS; i++) {
-        cudaSetDevice(0); // SHOULD BE 'i'
-        // OPTIONAL: VV (yellow) [TV' x TV]
-        // REQUIRED for CritPoints
-        std::cout << PUSHPIN_EMOJI << "Using GPU to compute " YELLOW_COLOR "VV" RESET_COLOR << std::endl;
-        timer.label_next_interval(YELLOW_COLOR "VV" RESET_COLOR " [GPU]");
-        timer.tick();
-        // Set contiguous data in host memory
-        int index = 0;
-        for (const auto & VertList : (*TVs[i]))
-            for (const int vertex : VertList)
-                host_flat_tvs[i][index++] = vertex;
-        // Device copy and host free
-        // BLOCKING -- provide barrier if made asynchronous to avoid free of host
-        // memory before copy completes
-        CUDA_WARN(cudaMemcpyAsync(device_TVs[i], host_flat_tvs[i], tv_flat_size,
-                                  cudaMemcpyHostToDevice));
-        // Pre-populate vv!
-        CUDA_WARN(cudaMemset(vv_computeds[i], -1, vv_size));
-
-        // Compute the relationship
-        std::cout << INFO_EMOJI << "Kernel launch configuration is " << grid_size.x
-                  << " grid blocks with " << thread_block_size.x << " threads per block"
-                  << std::endl;
-        std::cout << INFO_EMOJI << "The mesh has " << TVs[i]->nCells << " cells and "
-                  << TVs[i]->nPoints << " vertices" << std::endl;
-        std::cout << INFO_EMOJI << "Tids >= " << TVs[i]->nCells * nbVertsInCell
-                  << " should auto-exit (" << (thread_block_size.x * grid_size.x) - n_to_compute
-                  << ")" << std::endl;
-        Timer kernel(false, "VV_Kernel");
-        KERNEL_WARN(VV_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
-                                thread_block_size>>>(device_TVs[i],
-                                    TVs[i]->nCells,
-                                    TVs[i]->nPoints,
-                                    max_VV_guess,
-                                    vv_indices[i],
-                                    vv_computeds[i]));
-        // Things for Critical points to overlap with VV above
-        // Pre-populate scalar values
-        {
-            // Scalar values from VTK
-            for(int j = 0; j < TVs[i]->nPoints; j++) {
-                scalar_values[i][j] = TVs[i]->vertexAttributes[j];
-                //std::cerr << "TV value for point " << j << ": " << TVs[i]->vertexAttributes[j] << std::endl;
-                //std::cout << "A Scalar value for point " << j << ": " << scalar_values[i][j] << std::endl;
-            }
-            CUDA_WARN(cudaMemcpyAsync(device_scalar_values[i], scalar_values[i], scalars_size, cudaMemcpyHostToDevice));
-        }
-        CUDA_WARN(cudaDeviceSynchronize());
-        kernel.tick();
-        kernel.label_prev_interval("GPU kernel duration");
-        CUDA_WARN(cudaFree(device_TVs[i]));
-        // Pack data and return
-        device_VV * dvv = new device_VV{vv_computeds[i], vv_indices[i]};
-        timer.tick_announce();
-
-        // DEBUG FOR GALE INTEGRATION: Check VV ON HOST A BIT
+        std::cout << INFO_EMOJI << "Make thread GPU " << i << " ready" << std::endl;
+        thread_args[i] = thread_arguments(i, std::move(TVs[i]), host_flat_tvs[i], device_TVs[i], tv_flat_size,
+                      vv_computeds[i], vv_indices[i], vv_size, vv_index_size,
+                      scalar_values[i], device_scalar_values[i], scalars_size,
+                      device_valences[i], valences_size,
+                      device_CPCs[i], host_CPCs[i], classes_size, n_to_compute,
+                      max_VV_guess, thread_block_size, grid_size, shared_mem_size,
+                      args);
+        pthread_create(&threads[i], NULL, parallel_work, (void*)&thread_args[i]);
         /*
-        int * host_vv = nullptr;
-        unsigned int * host_vv_index = nullptr;
-        CUDA_ASSERT(cudaMallocHost((void**)&host_vv, vv_size));
-        CUDA_ASSERT(cudaMallocHost((void**)&host_vv_index, vv_index_size));
-        CUDA_WARN(cudaMemcpy(host_vv, vv_computeds[i], vv_size, cudaMemcpyDeviceToHost));
-        CUDA_WARN(cudaMemcpy(host_vv_index, vv_indices[i], vv_index_size, cudaMemcpyDeviceToHost));
-        int MAX_PRINT = 100;
-        for (int i = 0; i < 4; i++) {
-            std::cout << "Sanity check VV[" << i << "] with size " << host_vv_index[i] << std::endl;
-            int consecutive_minus_1 = 0;
-            for (int j = 0; j < max_VV_guess && MAX_PRINT > 0; j++) {
-                if (host_vv[(i*max_VV_guess)+j] == -1) {
-                    consecutive_minus_1++;
-                    continue;
-                }
-                else if (consecutive_minus_1 > 0) {
-                    std::cout << "\t" << i << ": -1 (" << consecutive_minus_1 << " times)" << std::endl;
-                }
-                std::cout << "\t" << i << ": " << host_vv[(i*max_VV_guess)+j] << std::endl;
-                MAX_PRINT--;
-            }
-            if (consecutive_minus_1 > 0) {
-                std::cout << "\t" << i << ": (possibly not complete: " << consecutive_minus_1 << " consecutive leftover -1's)" << std::endl;
-            }
-        }
-        CUDA_ASSERT(cudaFreeHost(host_vv));
-        CUDA_ASSERT(cudaFreeHost(host_vv_index));
+        parallel_work(i, std::move(TVs[i]), host_flat_tvs[i], device_TVs[i], tv_flat_size,
+                      vv_computeds[i], vv_indices[i], vv_size, vv_index_size,
+                      scalar_values[i], device_scalar_values[i], scalars_size,
+                      device_valences[i], valences_size,
+                      device_CPCs[i], host_CPCs[i], classes_size, n_to_compute,
+                      max_VV_guess, thread_block_size, grid_size, shared_mem_size,
+                      args);
         */
-        // DEBUG: Check lengths for threats to correctness / efficiency
-        timer.label_next_interval("Check for VV duplication / error");
-        timer.tick();
-        unsigned int * host_vv_index = nullptr;
-        CUDA_ASSERT(cudaMallocHost((void**)&host_vv_index, vv_index_size));
-        CUDA_WARN(cudaMemcpy(host_vv_index, vv_indices[i], vv_index_size, cudaMemcpyDeviceToHost));
-        unsigned int duplicates = 0, minmax_size = 0, actual_size = 0;
-        std::vector<unsigned int> overflow = std::vector<unsigned int>();
-        int * host_vv = nullptr;
-        // Determine the real size of de-duplicated VV
-        CUDA_ASSERT(cudaMallocHost((void**)&host_vv, vv_size));
-        CUDA_WARN(cudaMemcpy(host_vv, vv_computeds[i], vv_size, cudaMemcpyDeviceToHost));
-        std::vector<unsigned int> deduped_length(TVs[i]->nPoints);
-        std::vector<int> known_points(max_VV_guess);
-        unsigned int max_maybe_duped_degree = 0, max_actual_degree = 0;
-        for (int j = 0; j < TVs[i]->nPoints; j++) {
-            known_points.clear();
-            actual_size += host_vv_index[j];
-            if (host_vv_index[j] > static_cast<unsigned int>(max_VV_guess)) {
-                overflow.emplace_back(host_vv_index[j]-max_VV_guess);
-            }
-            if (host_vv_index[j] > max_maybe_duped_degree) {
-                max_maybe_duped_degree = host_vv_index[j];
-            }
-            for (unsigned int k = 0; k < host_vv_index[j]; k++) {
-                if (std::find(known_points.begin(), known_points.end(), host_vv[(j*max_VV_guess+k)]) == known_points.end()) {
-                    known_points.emplace_back(host_vv[(j*max_VV_guess)+k]);
-                }
-                else {
-                    duplicates++;
-                }
-            }
-            minmax_size += known_points.size();
-            if (known_points.size() > max_actual_degree) {
-                max_actual_degree = known_points.size();
-            }
-        }
-        if (overflow.size() > 0) {
-            std::cerr << WARN_EMOJI << "Detected " << overflow.size() << " points in VV that overflow the maximum adjacency limit!" << std::endl;
-            std::cerr << WARN_EMOJI << "Overflow amounts: ";
-            for (auto j : overflow) {
-                std::cerr << j << ", ";
-            }
-            std::cerr << std::endl;
-        }
-        else {
-            std::cerr << OK_EMOJI << "No overflow of VV detected" << std::endl;
-        }
-        if (duplicates > 0) {
-            std::cerr << WARN_EMOJI << "Detected " << duplicates << " VV duplicates (" << actual_size << " total entries, minimum count: " << minmax_size << " -- " << (actual_size/static_cast<float>(minmax_size))-1.0 << " proportionate extra)" << std::endl;
-        }
-        else {
-            std::cerr << OK_EMOJI << "No VV duplication detected. Minimum count: " << minmax_size << std::endl;
-        }
-        std::cerr << INFO_EMOJI << "Max VV was set to " << max_VV_guess << ". ACTUAL max VV is " << max_actual_degree << ", max utilized VV is " << max_maybe_duped_degree << std::endl;
-        timer.tick_announce();
-
-
-        // Critical Points
-        timer.label_next_interval("Run " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm");
-        // Set kernel launch parameters here
-        /*
-            1) Parallelize VV on second-dimension (can early-exit block if no data
-               available or if a prefix-scan of your primary-dimension list shows
-               that you are a duplicate)
-        */
-        timer.tick();
-        n_to_compute = TVs[i]->nPoints * max_VV_guess;
-        thread_block_size.x = max_VV_guess;
-        grid_size.x = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
-        #if CONSTRAIN_BLOCK
-        grid_size.x = 1;
-        std::cerr << EXCLAIM_EMOJI << "DEBUG! Setting kernel size to 1 block (as block " << FORCED_BLOCK_IDX << ")" << std::endl;
-        #endif
-        KERNEL_WARN(critPoints<<<grid_size KERNEL_LAUNCH_SEPARATOR
-                                 thread_block_size KERNEL_LAUNCH_SEPARATOR
-                                 shared_mem_size>>>(dvv->computed,
-                                                      dvv->index,
-                                                      device_valences[i],
-                                                      TVs[i]->nPoints,
-                                                      max_VV_guess,
-                                                      device_scalar_values[i],
-                                                      device_CPCs[i]));
-        CUDA_WARN(cudaDeviceSynchronize()); // Make algorithm timing accurate
-        timer.tick_announce();
-        all_critical_points.tick_announce();
-        timer.label_next_interval("Retrieve results from GPU");
-        timer.tick();
-        CUDA_WARN(cudaMemcpy(host_CPCs[i], device_CPCs[i], classes_size, cudaMemcpyDeviceToHost));
-        timer.tick();
-        timer.label_next_interval("Export results from " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm");
-        timer.tick();
-        if (args.export_ == "/dev/null") {
-            std::cerr << WARN_EMOJI << "Output to /dev/null omits function call entirely"
-                      << std::endl;
-        }
-        else {
-            export_classes(host_CPCs[i],
-                           #if CONSTRAIN_BLOCK
-                           #else
-                           TVs[i]->nPoints,
-                           #endif
-                           args);
-        }
-        timer.tick_announce();
-        timer.label_next_interval("Free memory");
-        timer.tick();
-        if (dvv != nullptr) free(dvv);
-        if (host_CPCs[i] != nullptr) CUDA_WARN(cudaFreeHost(host_CPCs[i]));
-        if (device_CPCs[i] != nullptr) CUDA_WARN(cudaFree(device_CPCs[i]));
-        if (device_valences[i] != nullptr) CUDA_WARN(cudaFree(device_valences[i]));
-        if (scalar_values[i] != nullptr) CUDA_WARN(cudaFreeHost(scalar_values[i]));
-        if (device_scalar_values[i] != nullptr) CUDA_WARN(cudaFree(device_scalar_values[i]));
-        CUDA_WARN(cudaFreeHost(host_flat_tvs[i]));
-        TVs[i].release();
-        timer.tick_announce();
     }
+    for (int i = 0; i < N_GPUS; i++) {
+        pthread_join(threads[i], NULL);
+    }
+    all_critical_points.tick_announce();
     // TODO: Rather than export classes above, you may want to merge results here
 }
 

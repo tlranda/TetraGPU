@@ -138,14 +138,14 @@ device_VT * make_VT_GPU_return(const VT_Data & VT);
 
 // ET = TE'
 std::unique_ptr<ET_Data> make_ET_GPU(const TE_Data & TE,
-                                     const arguments args);
+                                     const runtime_arguments args);
 // Possible alternative: ET = (TV x VE)'
 std::unique_ptr<ET_Data> make_ET_GPU(const TV_Data & TV,
                                      const VE_Data & VE,
                                      const vtkIdType n_points,
                                      const vtkIdType n_edges,
                                      const bool free_transients,
-                                     const arguments args);
+                                     const runtime_arguments args);
 
 #endif
 

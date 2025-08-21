@@ -43,7 +43,7 @@ int checkCellTypes(vtkPointSet *object) {
     return 0;
 }
 
-std::unique_ptr<TV_Data> get_TV_from_VTK(const arguments args) {
+std::unique_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
     // VTK loads the file data
     vtkSmartPointer<vtkXMLUnstructuredGridReader> reader =
         vtkSmartPointer<vtkXMLUnstructuredGridReader>::New();

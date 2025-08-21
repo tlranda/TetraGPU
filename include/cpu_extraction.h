@@ -22,7 +22,7 @@ std::unique_ptr<FE_Data> elective_make_FE(const VF_Data & VF,
                                           const vtkIdType n_points,
                                           const vtkIdType n_edges,
                                           const vtkIdType n_faces,
-                                          const arguments args);
+                                          const runtime_arguments args);
 std::unique_ptr<VV_Data> elective_make_VV(const TV_Data & TV,
                                           const vtkIdType n_points);
 vtkIdType make_TF_and_VF(const TV_Data & tv_relationship,

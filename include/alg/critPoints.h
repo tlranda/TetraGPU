@@ -25,7 +25,7 @@ __global__ void critPoints(const int * __restrict__ VV,
 
 void export_classes(unsigned int * classes,
                     vtkIdType n_classes,
-                    arguments & args);
+                    runtime_arguments & args);
 
 #endif
 
