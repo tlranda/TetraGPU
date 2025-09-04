@@ -61,18 +61,19 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
     // Disable getopt's automatic error messages so we can catch it via '?'
     opterr = 0;
     // Getopt option declarations
-    const char * optionstring = "hi:t:e:a:v:"
+    const char * optionstring = "hi:t:e:a:v:g:"
     ;
     static struct option long_options[] = {
         {"help", no_argument, 0, 'h'},
         {"input", required_argument, 0, 'i'},
         {"threads", required_argument, 0, 't'},
         {"export", required_argument, 0, 'e'},
+        {"arrayname", required_argument, 0, 'a'},
+        {"max_VV", required_argument, 0, 'v'},
+        {"gpus", required_argument, 0, 'g'},
         #ifdef VALIDATE_GPU
         {"validate", no_argument, &arg_flags[0], 1},
         #endif
-        {"arrayname", required_argument, 0, 'a'},
-        {"max_VV", required_argument, 0, 'v'},
         {"build_TE", no_argument, &arg_flags[1], 1},
         {"build_EV", no_argument, &arg_flags[2], 1},
         {"build_ET", no_argument, &arg_flags[3], 1},
@@ -93,11 +94,12 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
         {"input", "Tetrahedral mesh input (.vtu only)"},
         {"threads", "CPU thread limit for parallelism"},
         {"export", "File to export CritPoints classifications to"},
+        {"arrayname", "Array to use for scalar data (as string name)"},
+        {"max_VV", "Override estimation of max VV with integer value"},
+        {"gpus", "Set number of GPUs to use (larger than detected is warning, but will emulate behavior)"},
         #ifdef VALIDATE_GPU
         {"validate", "Check GPU results using CPU"},
         #endif
-        {"arrayname", "Array to use for scalar data (as string name)"},
-        {"max_VV", "Override estimation of max VV with integer value"},
         {"build_TE", "Build the TE relationship"},
         {"build_EV", "Build the EV relationship"},
         {"build_ET", "Build the ET relationship"},
@@ -116,7 +118,8 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
         {"input", "input.vtu"},
         {"export", "classes.txt"},
         {"arrayname", "my_scalar_data_name"},
-        {"max_VV", "(INT>0, preferably multiple of 32)"}
+        {"max_VV", "(INT>0, preferably multiple of 32)"},
+        {"gpus", "(INT>=0)"}
     };
     std::stringstream errors;
 
@@ -164,6 +167,9 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
                                                "multiple of 32!" << std::endl;
                 }
                 break;
+            case 'g':
+                args.n_GPUS = atoi(optarg);
+                break;
             case 'h':
                 std::string help = usage(argv[0],
                                          long_options,
@@ -171,6 +177,41 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
                                          metavars);
                 std::cout << help;
                 exit(EXIT_SUCCESS);
+        }
+    }
+    // Final parsing
+    if (args.n_GPUS == 0) {
+        // Ensure at least one GPU exists, else error
+        int check_gpus;
+        CUDA_WARN(cudaGetDeviceCount(&check_gpus));
+        if (check_gpus == 0) {
+            errors << EXCLAIM_EMOJI
+                   << "No GPUs detected on the system"
+                   << std::endl;
+            bad_args += 1;
+        }
+        else {
+            std::cerr << INFO_EMOJI << "Auto-detect " << check_gpus
+                      << " gpus on the system." << std::endl;
+        }
+        // Assign to use all GPUs
+        args.n_GPUS = check_gpus;
+    }
+    else {
+        // Warn about behaviors if more GPUs requested than detected
+        int check_gpus;
+        CUDA_WARN(cudaGetDeviceCount(&check_gpus));
+        if (check_gpus < args.n_GPUS) {
+            std::cerr << WARN_EMOJI
+                      << "Fewer GPUs detected on the system (" << check_gpus
+                      << ") than requested (" << args.n_GPUS << ")"
+                      << std::endl;
+        }
+        else {
+            std::cerr << OK_EMOJI
+                      << "Found all " << args.n_GPUS << " / " << check_gpus
+                      << " on the system. Proceed."
+                      << std::endl;
         }
     }
     // Display parsed values
@@ -184,17 +225,18 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
         std::cout << INFO_EMOJI << "Dataset: " << args.fileName << std::endl;
     }
     std::cout << INFO_EMOJI << "CPU threads: " << args.threadNumber
-              << std::endl;
-    std::cout << INFO_EMOJI << "Export: " << (args.export_ == "" ?
+              << std::endl
+              << INFO_EMOJI << "Export: " << (args.export_ == "" ?
                                               "[n/a]" :
-                                              args.export_) << std::endl;
-    std::cout << INFO_EMOJI << "Array name: " << (args.arrayname == "" ?
+                                              args.export_) << std::endl
+              << INFO_EMOJI << "Array name: " << (args.arrayname == "" ?
                                                 "[default to first array]" :
-                                                args.arrayname) << std::endl;
-    std::cout << INFO_EMOJI << "Max VV: " << (args.max_VV == -1 ?
+                                                args.arrayname) << std::endl
+              << INFO_EMOJI << "Max VV: " << (args.max_VV == -1 ?
                                                 "[Estimated from mesh]" :
                                                 std::to_string(args.max_VV))
-                            << std::endl;
+                            << std::endl
+              << INFO_EMOJI << "GPUs: " << args.n_GPUS << std::endl;
     // Set bit flags
     c = 0;
     for (int bit_value : arg_flags) {

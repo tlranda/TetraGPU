@@ -39,6 +39,7 @@ __global__ void critPoints(const int * __restrict__ VV,
                            const int points,
                            const int max_VV_guess,
                            const double * __restrict__ scalar_values,
+                           const unsigned int * __restrict__ partition,
                            unsigned int * __restrict__ classes) {
     extern __shared__ unsigned int block_shared[];
 
@@ -54,8 +55,8 @@ __global__ void critPoints(const int * __restrict__ VV,
     */
     const int my_1d = tid / max_VV_guess,
               my_2d = VV[tid];
-    // No work for this point's valence
-    if (VV_index[my_1d] <= 0 || my_2d < 0) return;
+    // No work for this point's valence or out of partition
+    if (VV_index[my_1d] <= 0 || my_2d < 0 || partition[my_1d] == 0) return;
     // Prefix scan as anti-duplication
     for (int i = my_1d * max_VV_guess; i < tid; i++) {
         if (VV[i] == my_2d) return;
@@ -201,27 +202,13 @@ __global__ void critPoints(const int * __restrict__ VV,
     }
 }
 
-void unify_mesh_classes(const int * points_per_segment,
-            const int max_VV_guess,
-            const int ** VV_segments,
-            const int ** VV_indices,
-            unsigned int * unified_classes,
-            #if CONSTRAIN_BLOCK
-            #else
-            vtkIdType n_classes,
-            #endif
-            runtime_arguments & args) {
-    /* Combine multiple kernel results into a single class list for use in export_classes()
-       Mostly expecting to need for duplicate answers on common boundaries between devices
-       to need to be addressed, otherwise it's a simple merge. */
-}
-
 void export_classes(unsigned int * classes,
                     #if CONSTRAIN_BLOCK
                     #else
                     vtkIdType n_classes,
                     #endif
                     runtime_arguments & args) {
+    // VOIDS can be ignored during aggregation, should all be eliminated after all GPU kernels have returned!
     std::ofstream output_fstream; // Used for file handle to indicated name
     std::streambuf * output_buffer; // Buffer may point to stdout or file handle
     if (args.export_ == "") {
@@ -240,7 +227,7 @@ void export_classes(unsigned int * classes,
     // Used for actual file handling
     std::ostream out(output_buffer);
     std::string class_names[] = {"NULL", "min", "max", "regular", "saddle"};
-    vtkIdType n_insane = 0, n_min = 0, n_max = 0, n_saddle = 0;
+    vtkIdType n_insane = 0, n_min = 0, n_max = 0, n_saddle = 0, n_void = 0;
     #if CONSTRAIN_BLOCK
     for (vtkIdType i = FORCED_BLOCK_IDX; i < FORCED_BLOCK_IDX+1; i++) {
     #else
@@ -275,6 +262,9 @@ void export_classes(unsigned int * classes,
         else if (my_class == SADDLE_CLASS) {
             n_saddle++;
         }
+        else if (my_class == 0) {
+            n_void++;
+        }
     }
     if (n_insane > 0) {
         std::cerr << WARN_EMOJI << RED_COLOR << "Insanity detected; "
@@ -284,6 +274,7 @@ void export_classes(unsigned int * classes,
     std::cout << "Number of minima: " << n_min << std::endl;
     std::cout << "Number of maxima: " << n_max << std::endl;
     std::cout << "Number of saddles: " << n_saddle << std::endl;
+    std::cout << "Number of voids: " << n_void << std::endl;
     #ifdef VALIDATE_GPU
     else {
         std::cerr << OK_EMOJI << "No insanity detected in GPU self-agreement "
@@ -307,6 +298,8 @@ struct thread_arguments {
     size_t scalars_size;
     int * device_valences;
     size_t valences_size;
+    unsigned int * partition_ids;
+    size_t partition_ids_size;
     unsigned int * device_CPCs;
     unsigned int * host_CPCs;
     size_t classes_size;
@@ -333,6 +326,8 @@ struct thread_arguments {
         size_t scalars_size1,
         int * device_valences1,
         size_t valences_size1,
+        unsigned int * partition_ids1,
+        size_t partition_ids_size1,
         unsigned int * device_CPCs1,
         unsigned int * host_CPCs1,
         size_t classes_size1,
@@ -342,21 +337,23 @@ struct thread_arguments {
         dim3 grid_size1,
         int shared_mem_size1,
         runtime_arguments args1) {
-            gpu_id = gpu_id1,
-            TV = std::move(TV1),
-            host_flat_tv = host_flat_tv1,
-            device_tv = device_tv1,
-            tv_flat_size = tv_flat_size1,
-            vv_computed = vv_computed1,
-            vv_index = vv_index1,
-            vv_size = vv_size1,
-            vv_index_size = vv_index_size1,
-            scalar_values = scalar_values1,
-            device_scalar_values = device_scalar_values1,
-            scalars_size = scalars_size1,
-            device_valences = device_valences1,
-            valences_size = valences_size1,
-            device_CPCs = device_CPCs1,
+            gpu_id = gpu_id1;
+            TV = std::move(TV1);
+            host_flat_tv = host_flat_tv1;
+            device_tv = device_tv1;
+            tv_flat_size = tv_flat_size1;
+            vv_computed = vv_computed1;
+            vv_index = vv_index1;
+            vv_size = vv_size1;
+            vv_index_size = vv_index_size1;
+            scalar_values = scalar_values1;
+            device_scalar_values = device_scalar_values1;
+            scalars_size = scalars_size1;
+            device_valences = device_valences1;
+            valences_size = valences_size1;
+            partition_ids = partition_ids1;
+            partition_ids_size = partition_ids_size1;
+            device_CPCs = device_CPCs1;
             host_CPCs = host_CPCs1;
             classes_size = classes_size1;
             n_to_compute = n_to_compute1;
@@ -370,7 +367,7 @@ struct thread_arguments {
 void * parallel_work(void *parallel_arguments) {
     // Unpacking
     thread_arguments *thread_args = (thread_arguments *)parallel_arguments;
-    const int gpu_id = thread_args->gpu_id;
+    int gpu_id = thread_args->gpu_id;
     const std::unique_ptr<TV_Data> TV = std::move(thread_args->TV);
     int * host_flat_tv = thread_args->host_flat_tv;
     int * device_tv = thread_args->device_tv;
@@ -384,6 +381,8 @@ void * parallel_work(void *parallel_arguments) {
     const size_t scalars_size = thread_args->scalars_size;
     int * device_valences = thread_args->device_valences;
     const size_t valences_size = thread_args->valences_size;
+    unsigned int * partition_ids = thread_args->partition_ids;
+    const size_t partition_ids_size = thread_args->partition_ids_size;
     unsigned int * device_CPCs = thread_args->device_CPCs;
     unsigned int * host_CPCs = thread_args->host_CPCs;
     const size_t classes_size = thread_args->classes_size;
@@ -396,12 +395,18 @@ void * parallel_work(void *parallel_arguments) {
     dim3 grid_size = thread_args->grid_size;
 
     char timername[32];
-    sprintf(timername, "Parallel work %02d", gpu_id);
+    sprintf(timername, "Parallel worker %02d", gpu_id);
     Timer timer(false, timername);
-    cudaSetDevice(gpu_id);
+    // TEMPORARY: Need to know actual GPUs if oversubscribing
+    int actual_gpus, vgpu_id;
+    CUDA_WARN(cudaGetDeviceCount(&actual_gpus));
+    vgpu_id = (gpu_id % actual_gpus);
+    cudaSetDevice(vgpu_id);
     // OPTIONAL: VV (yellow) [TV' x TV]
     // REQUIRED for CritPoints
-    std::cout << PUSHPIN_EMOJI << "Using GPU " << gpu_id << " to compute " YELLOW_COLOR "VV" RESET_COLOR << std::endl;
+    std::cout << PUSHPIN_EMOJI << "Using GPU " << gpu_id << " (Actual GPU ID: "
+              << vgpu_id << ") to compute " YELLOW_COLOR "VV" RESET_COLOR
+              << std::endl;
     timer.label_next_interval(YELLOW_COLOR "VV" RESET_COLOR " [GPU]");
     timer.tick();
     // Set contiguous data in host memory
@@ -418,15 +423,17 @@ void * parallel_work(void *parallel_arguments) {
     CUDA_WARN(cudaMemset(vv_computed, -1, vv_size));
 
     // Compute the relationship
-    std::cout << INFO_EMOJI << "Kernel launch configuration is " << grid_size.x
-              << " grid blocks with " << thread_block_size.x << " threads per block"
-              << std::endl;
-    std::cout << INFO_EMOJI << "The mesh has " << TV->nCells << " cells and "
-              << TV->nPoints << " vertices" << std::endl;
-    std::cout << INFO_EMOJI << "Tids >= " << TV->nCells * nbVertsInCell
+    std::cout << INFO_EMOJI << timername << " Kernel launch configuration is "
+              << grid_size.x << " grid blocks with " << thread_block_size.x
+              << " threads per block" << std::endl;
+    std::cout << INFO_EMOJI << timername << " The mesh has " << TV->nCells
+              << " cells and " << TV->nPoints << " vertices" << std::endl;
+    std::cout << INFO_EMOJI << timername << " Tids >= " << TV->nCells * nbVertsInCell
               << " should auto-exit (" << (thread_block_size.x * grid_size.x) - n_to_compute
               << ")" << std::endl;
-    Timer kernel(false, "VV_Kernel");
+    char kerneltimername[32];
+    sprintf(kerneltimername, "Parallel kernel %02d", gpu_id);
+    Timer kernel(false, kerneltimername);
     KERNEL_WARN(VV_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
                             thread_block_size>>>(device_tv,
                                 TV->nCells,
@@ -557,6 +564,7 @@ void * parallel_work(void *parallel_arguments) {
     grid_size.x = 1;
     std::cerr << EXCLAIM_EMOJI << "DEBUG! Setting kernel size to 1 block (as block " << FORCED_BLOCK_IDX << ")" << std::endl;
     #endif
+    std::cout << timername << " Launch critPoints kernel with " << n_to_compute << " units of work (" << grid_size.x << " blocks, " << thread_block_size.x << " threads per block)" << std::endl;
     KERNEL_WARN(critPoints<<<grid_size KERNEL_LAUNCH_SEPARATOR
                              thread_block_size KERNEL_LAUNCH_SEPARATOR
                              shared_mem_size>>>(dvv->computed,
@@ -565,6 +573,7 @@ void * parallel_work(void *parallel_arguments) {
                                                   TV->nPoints,
                                                   max_VV_guess,
                                                   device_scalar_values,
+                                                  partition_ids,
                                                   device_CPCs));
     CUDA_WARN(cudaDeviceSynchronize()); // Make algorithm timing accurate
     timer.tick_announce();
@@ -590,6 +599,7 @@ void * parallel_work(void *parallel_arguments) {
     timer.label_next_interval("Free memory");
     timer.tick();
     if (dvv != nullptr) free(dvv);
+    if (partition_ids != nullptr) CUDA_WARN(cudaFree(partition_ids));
     if (host_CPCs != nullptr) CUDA_WARN(cudaFreeHost(host_CPCs));
     if (device_CPCs != nullptr) CUDA_WARN(cudaFree(device_CPCs));
     if (device_valences != nullptr) CUDA_WARN(cudaFree(device_valences));
@@ -599,27 +609,6 @@ void * parallel_work(void *parallel_arguments) {
     //TVs[i].release();
     timer.tick_announce();
 }
-
-/*
-void * critPointsDriver(void *arg) {
-   int id = *(int *)arg;
-   // cudaStream_t thread_stream;
-   //CHECK_CUDA_ERROR(cudaStreamCreate(&thread_stream));
-   //CHECK_CUDA_ERROR(cudaStreamSynchronize(thread_stream));
-   //CHECK_CUDA_ERROR(cudaMemcpyAsync(device,host,size,direction,thread_stream));
-   //CHECK_CUDA_ERROR(cudaStreamSynchronize(thread_stream));
-   //KERNEL<<<grid,block,shmem,thread_stream>>>(ARGS);
-   int *tids = new int[n_threads];
-   pthread_t *threads = new pthread_t[n_threads];
-   for (int i = 0; i < n_threads; i++) {
-    tids[i] = i;
-    pthread_create(&threads[i], NULL, critPointsDriver, &tids[i]);
-   }
-   for (int i = 0; i < n_threads; i++) {
-    pthread_join(threads[i], NULL);
-   }
-}
-*/
 
 int main(int argc, char *argv[]) {
     Timer timer(false, "Main");
@@ -631,13 +620,7 @@ int main(int argc, char *argv[]) {
     // Always create a context
     timer.label_next_interval(RED_COLOR "Create CUDA Contexts on all GPUs" RESET_COLOR);
     timer.tick();
-    int N_GPUS = 0;
-    cudaGetDeviceCount(&N_GPUS);
-    if (N_GPUS == 0) {
-        std::cout << WARN_EMOJI << "No GPUs detected!" << std::endl;
-        return 1;
-    }
-    for (int i = 0; i < N_GPUS; i++) {
+    for (int i = 0; i < args.n_GPUS; i++) {
         cudaSetDevice(i);
         (void)cudaFree(0);
     }
@@ -646,7 +629,7 @@ int main(int argc, char *argv[]) {
     if (! args.validate()) {
         timer.label_next_interval("GPU context creation with dummy kernel");
         timer.tick();
-        for (int i = 0; i < N_GPUS; i++) {
+        for (int i = 0; i < args.n_GPUS; i++) {
             cudaSetDevice(i);
             KERNEL_WARN(dummy_kernel<<<1 KERNEL_LAUNCH_SEPARATOR 1>>>());
             CUDA_ASSERT(cudaDeviceSynchronize());
@@ -654,7 +637,7 @@ int main(int argc, char *argv[]) {
         timer.tick_announce();
         timer.label_next_interval("GPU trivial kernel launch");
         timer.tick();
-        for (int i = 0; i < N_GPUS; i++) {
+        for (int i = 0; i < args.n_GPUS; i++) {
             cudaSetDevice(i);
             KERNEL_WARN(dummy_kernel<<<1 KERNEL_LAUNCH_SEPARATOR 1>>>());
             CUDA_ASSERT(cudaDeviceSynchronize());
@@ -672,7 +655,7 @@ int main(int argc, char *argv[]) {
     // TV->vertexAttributes (one scalar per vertex)
     // PROTOTYPE: Reloads a single VTK mesh ONCE PER GPU rather than partitioning a large mesh or loading precomputed partitions -- just demonstrate scaling on similar data volume!
     std::vector<std::unique_ptr<TV_Data>> TVs;
-    for (int i = 0; i < N_GPUS; i++) {
+    for (int i = 0; i < args.n_GPUS; i++) {
         std::cout << INFO_EMOJI << "Load for GPU #" << i << std::endl;
         /*
         std::unique_ptr<TV_Data> TV = get_TV_from_VTK(args); // Uses: args.filename
@@ -690,7 +673,7 @@ int main(int argc, char *argv[]) {
     int max_VV_guess = args.max_VV;
     // TODO: Parallelize this across unique_ptrs and possibly make max_VV independent between GPUs
     if (max_VV_guess < 0) {
-        for (int i = 0; i < N_GPUS; i++) {
+        for (int i = 0; i < args.n_GPUS; i++) {
             int new_VV_guess = get_approx_max_VV(*TVs[i], TVs[i]->nPoints);
             if (max_VV_guess < new_VV_guess) max_VV_guess = new_VV_guess;
         }
@@ -705,6 +688,7 @@ int main(int argc, char *argv[]) {
            vv_size = sizeof(int) * TVs[0]->nPoints * max_VV_guess,
            vv_index_size = sizeof(unsigned int) * TVs[0]->nPoints,
            // #Upper, #Lower, Classification
+           partition_ids_size = sizeof(unsigned int) * TVs[0]->nPoints,
            classes_size = sizeof(unsigned int) * TVs[0]->nPoints * 3,
            // Upper/lower per adjacency
            valences_size = sizeof(int) * TVs[0]->nPoints * max_VV_guess,
@@ -715,8 +699,8 @@ int main(int argc, char *argv[]) {
     const int shared_mem_size = sizeof(unsigned int) * (2+max_VV_guess);
 
     // Announce expected sizes before possibly running OOM
-    std::cout << INFO_EMOJI << "Estimated memory footprint: " << (tv_flat_size+
-            classes_size+scalars_size+vv_size+vv_index_size+valences_size) / static_cast<float>(1024*1024*1024) <<
+    std::cout << INFO_EMOJI << "Estimated memory footprint:   " << (tv_flat_size+
+            partition_ids_size+classes_size+scalars_size+vv_size+vv_index_size+valences_size) / static_cast<float>(1024*1024*1024) <<
         " GiB" << std::endl;
     std::cout << INFO_EMOJI << "Estimated H->D memory demand: " << (tv_flat_size+
             scalars_size) / static_cast<float>(1024*1024*1024) <<
@@ -725,61 +709,65 @@ int main(int argc, char *argv[]) {
 
     // Allocations
     // in cuda_extraction.cu: int * device_TV = nullptr;
-    std::vector<int *> device_TVs(N_GPUS);
-    std::vector<int *> host_flat_tvs(N_GPUS);
-    std::vector<int *> vv_computeds(N_GPUS);
-    std::vector<unsigned int *> vv_indices(N_GPUS);
-    std::vector<unsigned int *> host_CPCs(N_GPUS),
-                                device_CPCs(N_GPUS);
-    std::vector<int *> device_valences(N_GPUS);
-    std::vector<double *> scalar_values(N_GPUS),
-                          device_scalar_values(N_GPUS);
-    for (int i = 0; i < N_GPUS; i++) {
+    std::vector<int *> device_TVs(args.n_GPUS),
+                       host_flat_tvs(args.n_GPUS),
+                       vv_computeds(args.n_GPUS);
+    std::vector<unsigned int *> vv_indices(args.n_GPUS),
+                                partition_ids(args.n_GPUS),
+                                host_CPCs(args.n_GPUS),
+                                device_CPCs(args.n_GPUS);
+    std::vector<int *> device_valences(args.n_GPUS);
+    std::vector<double *> scalar_values(args.n_GPUS),
+                          device_scalar_values(args.n_GPUS);
+    for (int i = 0; i < args.n_GPUS; i++) {
         cudaSetDevice(i); // SHOULD BE 'i'
         CUDA_ASSERT(cudaMalloc((void**)&device_TVs[i], tv_flat_size));
         CUDA_ASSERT(cudaMallocHost((void**)&host_flat_tvs[i], tv_flat_size));
         CUDA_ASSERT(cudaMalloc((void**)&vv_computeds[i], vv_size));
         CUDA_ASSERT(cudaMalloc((void**)&vv_indices[i], vv_index_size));
+        CUDA_ASSERT(cudaMalloc((void**)&partition_ids[i], partition_ids_size));
         CUDA_ASSERT(cudaMallocHost((void**)&host_CPCs[i], classes_size));
         CUDA_ASSERT(cudaMalloc((void**)&device_CPCs[i], classes_size));
         CUDA_ASSERT(cudaMalloc((void**)&device_valences[i], valences_size));
         CUDA_ASSERT(cudaMallocHost((void**)&scalar_values[i], scalars_size));
         CUDA_ASSERT(cudaMalloc((void**)&device_scalar_values[i], scalars_size));
     }
+    // BUILDING: Partition IDs based on gpu ID for now (naive round robin)
+    for (int i = 0; i < args.n_GPUS; i++) {
+        unsigned int * partition_id_settings = new unsigned int[TVs[0]->nPoints];
+        for (int j = 0; j < TVs[0]->nPoints; j++) {
+            partition_id_settings[j] = (j % args.n_GPUS) == i;
+        }
+        CUDA_WARN(cudaMemcpy(partition_ids[i], partition_id_settings,
+                             partition_ids_size, cudaMemcpyHostToDevice));
+        delete partition_id_settings;
+    }
+    // END BUILDING -- this will be deprecated for real behavior in the future!
     timer.tick_announce();
 
     // Usually VE and VF are also mandatory, but CritPoints does not require
     // these relationships! Skip them!
 
 
-    // TODO: Make this a function that you pthread/join so it is CPU-parallel to each GPU
     std::cout << WARN_EMOJI << "BEEG LOOP" << std::endl;
-    pthread_t threads[N_GPUS];
-    thread_arguments thread_args[N_GPUS];
-    for (int i = 0; i < N_GPUS; i++) {
+    pthread_t threads[args.n_GPUS];
+    thread_arguments thread_args[args.n_GPUS];
+    for (int i = 0; i < args.n_GPUS; i++) {
         std::cout << INFO_EMOJI << "Make thread GPU " << i << " ready" << std::endl;
         thread_args[i] = thread_arguments(i, std::move(TVs[i]), host_flat_tvs[i], device_TVs[i], tv_flat_size,
                       vv_computeds[i], vv_indices[i], vv_size, vv_index_size,
                       scalar_values[i], device_scalar_values[i], scalars_size,
                       device_valences[i], valences_size,
+                      partition_ids[i], partition_ids_size,
                       device_CPCs[i], host_CPCs[i], classes_size, n_to_compute,
                       max_VV_guess, thread_block_size, grid_size, shared_mem_size,
                       args);
         pthread_create(&threads[i], NULL, parallel_work, (void*)&thread_args[i]);
-        /*
-        parallel_work(i, std::move(TVs[i]), host_flat_tvs[i], device_TVs[i], tv_flat_size,
-                      vv_computeds[i], vv_indices[i], vv_size, vv_index_size,
-                      scalar_values[i], device_scalar_values[i], scalars_size,
-                      device_valences[i], valences_size,
-                      device_CPCs[i], host_CPCs[i], classes_size, n_to_compute,
-                      max_VV_guess, thread_block_size, grid_size, shared_mem_size,
-                      args);
-        */
     }
-    for (int i = 0; i < N_GPUS; i++) {
+    for (int i = 0; i < args.n_GPUS; i++) {
         pthread_join(threads[i], NULL);
     }
     all_critical_points.tick_announce();
-    // TODO: Rather than export classes above, you may want to merge results here
+    // TODO: Merge results between threads here, perhaps have parallel_work return mesh-able arrays to re-call a similar function to export_classes() upon
 }
 

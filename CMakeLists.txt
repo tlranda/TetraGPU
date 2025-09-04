@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.12 FATAL_ERROR)
 
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES 61)
+endif()
+
 project(tetra_topo
     VERSION 0.0.1
     DESCRIPTION "GPU Tetrahedron Mesh Processing"
@@ -16,6 +20,7 @@ endif (NOT VALIDATE_GPU)
 set(CMAKE_OUTPUT_NAME "main" CACHE STRING "Name of the output executable")
 add_executable(main ${sources})
 set_target_properties(main PROPERTIES OUTPUT_NAME ${CMAKE_OUTPUT_NAME})
+set_target_properties(main PROPERTIES CUDA_RUNTIME_LIBRARY Shared)
 include_directories(${CMAKE_BINARY_DIR})
 
 # CUDA Dependency
@@ -35,6 +40,7 @@ execute_process(COMMAND hostname
 #    include_directories(/usr/local/cuda-12.5/include)
 #    link_directories(/usr/local/cuda-12.5/libnvvp /usr/local/cuda-12.5/lib64)
 #    target_link_libraries(main PRIVATE -lstdc++)
+target_link_libraries(main PRIVATE -lcudart)
 #else()
 #    message(STATUS "Not host 'n01', no ccbin aded")
 #    find_package(CUDA PATHS /usr/local/)
@@ -67,7 +73,7 @@ set(CMAKE_USE_WIN32_THREADS_INIT 0)
 set(CMAKE_USE_PTHREADS_INIT 1)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 set(CUDA_SEPARABLE_COMPILATION ON)
-set(CMAKE_CUDA_ARCHITECTURES "61")
+#set(CMAKE_CUDA_ARCHITECTURES "61")
 #set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 target_compile_options(main PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:--ptxas-options=-v>)
 target_compile_options(main PRIVATE -Wall -Wextra -Wno-pedantic) # -Werror

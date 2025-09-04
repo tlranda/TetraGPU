@@ -8,6 +8,7 @@
 #include <getopt.h> // getopt_long()
 #include <cstdlib>  // atoi
 #include <array> // std::array
+#include "cuda_safety.h" // Safety allows for Cuda runtime check for GPU count with error handling
 #include "datatypes.h" // runtime_arguments struct
 #include "emoji.h" // Emoji chars
 

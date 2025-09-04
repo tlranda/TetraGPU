@@ -136,7 +136,7 @@ typedef std::vector<std::vector<vtkIdType>> TT_Data;
 // Argument values to be stored here, with defaults if they are optional
 typedef struct argstruct {
     std::string fileName = "tiny.vtu";
-    int threadNumber = 1, max_VV = -1;
+    int threadNumber = 1, max_VV = -1, n_GPUS = 0;
     std::string export_ = "";
     std::string arrayname = "";
     // Endian-ness may mean defaults need to be set in LSB->MSB order
@@ -183,6 +183,7 @@ typedef struct argstruct {
         export_ = other.export_;
         arrayname = other.arrayname;
         arg_flags = other.arg_flags;
+        n_GPUS = other.n_GPUS;
     }
 } runtime_arguments;
 typedef std::map<const char*, std::string> option_map;
