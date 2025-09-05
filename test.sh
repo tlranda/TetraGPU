@@ -91,10 +91,10 @@ fi
 cd ${build_dir} && make VERBOSE=1;
 if [ $? -ne 0 ]; then
     echo "Make return $?";
-    exit;
+    exit $?;
 fi
-if [[ "${compile_only}" != "" ]]; then
-    exit;
+if [[ "${compile_only}" != "0" ]]; then
+    exit 0;
 fi
 cd ..;
 
