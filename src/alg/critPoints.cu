@@ -244,7 +244,9 @@ void export_classes(unsigned int * classes,
             (n_upper == 0 && n_lower >= 1 && my_class != MAXIMUM_CLASS) ||
             (n_upper == 1 && n_lower == 1 && my_class != REGULAR_CLASS) ||
             ((n_upper > 1 && n_lower > 1) && my_class != SADDLE_CLASS)) {
-            out << "INSANITY DETECTED (" << n_upper << ", " << n_lower << ") FOR POINT " << i << std::endl;
+            out << "INSANITY DETECTED (" << n_upper << ", " << n_lower << ", " << my_class << ") FOR POINT " << i << " (Given class "
+                << (my_class == 1 ? "Maximum" : (my_class == 2 ? "Minimum" : (my_class == 3 ? "Regular" : "Saddle")))
+                << ")" << std::endl;
             n_insane++;
         }
         /*
@@ -384,12 +386,12 @@ void * parallel_work(void *parallel_arguments) {
     unsigned int * partition_ids = thread_args->partition_ids;
     const size_t partition_ids_size = thread_args->partition_ids_size;
     unsigned int * device_CPCs = thread_args->device_CPCs;
+    // host_CPCs is the return value! (or part of it, depending on implementation)
     unsigned int * host_CPCs = thread_args->host_CPCs;
     const size_t classes_size = thread_args->classes_size;
     int n_to_compute = thread_args->n_to_compute;
     const int max_VV_guess = thread_args->max_VV_guess;
     const int shared_mem_size = thread_args->shared_mem_size;
-    // why is this wrong
     runtime_arguments _my_args = thread_args->args;
     dim3 thread_block_size = thread_args->thread_block_size;
     dim3 grid_size = thread_args->grid_size;
@@ -581,6 +583,7 @@ void * parallel_work(void *parallel_arguments) {
     timer.tick();
     CUDA_WARN(cudaMemcpy(host_CPCs, device_CPCs, classes_size, cudaMemcpyDeviceToHost));
     timer.tick();
+    /*
     timer.label_next_interval("Export results from " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm");
     timer.tick();
     if (_my_args.export_ == "/dev/null") {
@@ -596,18 +599,21 @@ void * parallel_work(void *parallel_arguments) {
                        _my_args);
     }
     timer.tick_announce();
+    */
     timer.label_next_interval("Free memory");
     timer.tick();
     if (dvv != nullptr) free(dvv);
     if (partition_ids != nullptr) CUDA_WARN(cudaFree(partition_ids));
-    if (host_CPCs != nullptr) CUDA_WARN(cudaFreeHost(host_CPCs));
     if (device_CPCs != nullptr) CUDA_WARN(cudaFree(device_CPCs));
     if (device_valences != nullptr) CUDA_WARN(cudaFree(device_valences));
     if (scalar_values != nullptr) CUDA_WARN(cudaFreeHost(scalar_values));
     if (device_scalar_values != nullptr) CUDA_WARN(cudaFree(device_scalar_values));
+    //if (host_CPCs != nullptr) CUDA_WARN(cudaFreeHost(host_CPCs));
     CUDA_WARN(cudaFreeHost(host_flat_tv));
     //TVs[i].release();
     timer.tick_announce();
+
+    return (void*)host_CPCs;
 }
 
 int main(int argc, char *argv[]) {
@@ -752,6 +758,7 @@ int main(int argc, char *argv[]) {
     std::cout << WARN_EMOJI << "BEEG LOOP" << std::endl;
     pthread_t threads[args.n_GPUS];
     thread_arguments thread_args[args.n_GPUS];
+    const int n_points = TVs[0]->nPoints;
     for (int i = 0; i < args.n_GPUS; i++) {
         std::cout << INFO_EMOJI << "Make thread GPU " << i << " ready" << std::endl;
         thread_args[i] = thread_arguments(i, std::move(TVs[i]), host_flat_tvs[i], device_TVs[i], tv_flat_size,
@@ -764,9 +771,57 @@ int main(int argc, char *argv[]) {
                       args);
         pthread_create(&threads[i], NULL, parallel_work, (void*)&thread_args[i]);
     }
+    // Merge-able structure
+    unsigned int * returned_values = new unsigned int[(3*n_points)];
+    bzero(returned_values, 3*n_points);
     for (int i = 0; i < args.n_GPUS; i++) {
-        pthread_join(threads[i], NULL);
+        unsigned int *return_val;
+        pthread_join(threads[i], (void**)&return_val);
+        timer.label_next_interval("Export results from " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm");
+        timer.tick();
+        if (args.export_ == "/dev/null") {
+            std::cerr << WARN_EMOJI << "Output to /dev/null omits function call entirely"
+                      << std::endl;
+        }
+        else {
+            export_classes(return_val,
+                           #if CONSTRAIN_BLOCK
+                           #else
+                           n_points,
+                           #endif
+                           args);
+        }
+        timer.tick_announce();
+        // Merge results
+        for (int j = 0; j < (3*n_points); j++) {
+            if (return_val[j] != 0) {
+                unsigned int localized = j/3;
+                if (localized == 5031) {
+                    std::cout << "GPU " << i << " makes a write for point "
+                              << localized << "(sub-index " << j % 3
+                              << " with value=" << return_val[j] << ")"
+                              << std::endl;
+                }
+                returned_values[j] = return_val[j];
+            }
+        }
     }
+    timer.label_next_interval("Full results");
+    timer.tick();
+    if (args.export_ == "/dev/null") {
+        std::cerr << WARN_EMOJI << "Output to /dev/null omits function call entirely"
+                  << std::endl;
+    }
+    else {
+        export_classes(returned_values,
+                       #if CONSTRAIN_BLOCK
+                       #else
+                       n_points,
+                       #endif
+                       args);
+    }
+    delete[] returned_values;
+    timer.tick_announce();
     all_critical_points.tick_announce();
     // TODO: Merge results between threads here, perhaps have parallel_work return mesh-able arrays to re-call a similar function to export_classes() upon
 }
