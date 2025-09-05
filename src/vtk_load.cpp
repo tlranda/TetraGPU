@@ -43,7 +43,7 @@ int checkCellTypes(vtkPointSet *object) {
     return 0;
 }
 
-std::unique_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
+std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
     // VTK loads the file data
     vtkSmartPointer<vtkXMLUnstructuredGridReader> reader =
         vtkSmartPointer<vtkXMLUnstructuredGridReader>::New();
@@ -110,7 +110,7 @@ std::unique_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
     // We preserve the locality provided by the input, which means we assume
     // that adjacent cellIDs are close on the mesh and that their vertex IDs
     // are ordered to promote spatial locality between neighbor cells
-    std::unique_ptr<TV_Data> data = std::make_unique<TV_Data>(nPoints, nCells);
+    std::shared_ptr<TV_Data> data = std::make_shared<TV_Data>(nPoints, nCells);
     //#pragma omp parallel for num_threads(args.threadNumber)
     for (vtkIdType cellIndex = 0; cellIndex < nCells; cellIndex++) {
         std::array<vtkIdType,4> cell_vertices{
@@ -140,7 +140,7 @@ std::unique_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
         std::cout << "\tArray " << i << " is named " << (pd->GetArrayName(i) ? pd->GetArrayName(i) : "NULL (not specified)") << std::endl;
         if (use_this_array == -1 && args.arrayname != "" && pd->GetArrayName(i) == args.arrayname) {
             use_this_array = i;
-            std::cout << "Found user's requested array:" << args.arrayname << std::endl;
+            std::cout << "Found user's requested array: " << args.arrayname << std::endl;
         }
     }
     if (use_this_array == -1) {
@@ -155,6 +155,32 @@ std::unique_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
     std::vector<double> vertexAttributeValues(nPoints);
     for (vtkIdType i = 0; i < nPoints; i++) vertexAttributeValues[i] = vertexAttributes->GetTuple1(i);
     data->vertexAttributes = std::move(vertexAttributeValues);
+
+    // Retrieve partitioning IDs
+    if (args.partitioningname == "") {
+        // Default everything into a single partition
+        std::vector<unsigned int> partitionIDs(nPoints,0);
+        data->partitionIDs = std::move(partitionIDs);
+    }
+    else {
+        // Re-use pd from scalar fetch, similar process
+        use_this_array = -1;
+        for (int i = 0; i < pd->GetNumberOfArrays(); i++) {
+            if (args.partitioningname == pd->GetArrayName(i)) {
+                use_this_array = i;
+                std::cout << "Found user's requested partitioning: " << args.partitioningname << std::endl;
+                break;
+            }
+        }
+        if (use_this_array == -1) {
+            std::cerr << EXCLAIM_EMOJI << "Unable to find partitioning name '" << args.partitioningname << "' in dataset" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+        vtkDataArray* partitionAttribute = pd->GetArray(use_this_array);
+        std::vector<unsigned int> partitionIDs(nPoints);
+        for (vtkIdType i = 0; i < nPoints; i++) partitionIDs[i] = partitionAttribute->GetTuple1(i);
+        data->partitionIDs = std::move(partitionIDs);
+    }
 
     return data;
 }

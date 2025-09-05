@@ -11,7 +11,7 @@
 #include "emoji.h"
 
 int checkCellTypes(vtkPointSet *object);
-std::unique_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args);
+std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args);
 
 #endif
 

@@ -61,7 +61,7 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
     // Disable getopt's automatic error messages so we can catch it via '?'
     opterr = 0;
     // Getopt option declarations
-    const char * optionstring = "hi:t:e:a:v:g:"
+    const char * optionstring = "hi:t:e:a:p:v:g:"
     ;
     static struct option long_options[] = {
         {"help", no_argument, 0, 'h'},
@@ -69,6 +69,7 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
         {"threads", required_argument, 0, 't'},
         {"export", required_argument, 0, 'e'},
         {"arrayname", required_argument, 0, 'a'},
+        {"partitioningname", required_argument, 0, 'p'},
         {"max_VV", required_argument, 0, 'v'},
         {"gpus", required_argument, 0, 'g'},
         #ifdef VALIDATE_GPU
@@ -95,6 +96,7 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
         {"threads", "CPU thread limit for parallelism"},
         {"export", "File to export CritPoints classifications to"},
         {"arrayname", "Array to use for scalar data (as string name)"},
+        {"partitioningname", "Array to use for multi-GPU partitioning (as string name)"},
         {"max_VV", "Override estimation of max VV with integer value"},
         {"gpus", "Set number of GPUs to use (larger than detected is warning, but will emulate behavior)"},
         #ifdef VALIDATE_GPU
@@ -118,6 +120,7 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
         {"input", "input.vtu"},
         {"export", "classes.txt"},
         {"arrayname", "my_scalar_data_name"},
+        {"partitioningname", "my_partition_data_name"},
         {"max_VV", "(INT>0, preferably multiple of 32)"},
         {"gpus", "(INT>=0)"}
     };
@@ -155,6 +158,9 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
                 break;
             case 'a':
                 args.arrayname = std::string(optarg);
+                break;
+            case 'p':
+                args.partitioningname = std::string(optarg);
                 break;
             case 'v':
                 args.max_VV = atoi(optarg);
@@ -214,6 +220,13 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
                       << std::endl;
         }
     }
+    // Truncate to single-GPU execution with warning if no partitioning provided!
+    if (args.partitioningname == "" && args.n_GPUS > 1) {
+        std::cerr << WARN_EMOJI
+                  << "No partitioning name given (-p/--partitioningname), only ONE GPU can be used!"
+                  << std::endl;
+        args.n_GPUS = 1;
+    }
     // Display parsed values
     if (args.fileName.empty()) {
         errors << EXCLAIM_EMOJI
@@ -232,6 +245,9 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
               << INFO_EMOJI << "Array name: " << (args.arrayname == "" ?
                                                 "[default to first array]" :
                                                 args.arrayname) << std::endl
+              << INFO_EMOJI << "Partitioning name: " << (args.partitioningname == "" ?
+                                                "NO PARTITIONING -- SINGLE GPU" :
+                                                args.partitioningname) << std::endl
               << INFO_EMOJI << "Max VV: " << (args.max_VV == -1 ?
                                                 "[Estimated from mesh]" :
                                                 std::to_string(args.max_VV))

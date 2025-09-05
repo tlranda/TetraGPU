@@ -99,40 +99,20 @@ __global__ void critPoints(const int * __restrict__ VV,
         // Sanity: Guarantee zero-init
         if (threadIdx.x == 0) {
             #if PRINT_ON
-            printf("Block %d Iteration %d: upper_edits %u lower_edits %u Neighborhood %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
+            printf("Block %d Iteration %d: upper_edits %u lower_edits %u "
+                   "Neighborhood %d %d %d %d %d %d %d %d "
+                                "%d %d %d %d %d %d %d %d "
+                                "%d %d %d %d %d %d %d %d "
+                                "%d %d %d %d %d %d %d %d\n",
                     blockIdx.x, /*inspect_step*/0, *upper_edits, *lower_edits,
-                    neighborhood[0],
-                    neighborhood[1],
-                    neighborhood[2],
-                    neighborhood[3],
-                    neighborhood[4],
-                    neighborhood[5],
-                    neighborhood[6],
-                    neighborhood[7],
-                    neighborhood[8],
-                    neighborhood[9],
-                    neighborhood[10],
-                    neighborhood[11],
-                    neighborhood[12],
-                    neighborhood[13],
-                    neighborhood[14],
-                    neighborhood[15],
-                    neighborhood[16],
-                    neighborhood[17],
-                    neighborhood[18],
-                    neighborhood[19],
-                    neighborhood[20],
-                    neighborhood[21],
-                    neighborhood[22],
-                    neighborhood[23],
-                    neighborhood[24],
-                    neighborhood[25],
-                    neighborhood[26],
-                    neighborhood[27],
-                    neighborhood[28],
-                    neighborhood[29],
-                    neighborhood[30],
-                    neighborhood[31]);
+                    neighborhood[0],neighborhood[1],neighborhood[2],neighborhood[3],
+                    neighborhood[4],neighborhood[5],neighborhood[6],neighborhood[7],
+                    neighborhood[8],neighborhood[9],neighborhood[10],neighborhood[11],
+                    neighborhood[12],neighborhood[13],neighborhood[14],neighborhood[15],
+                    neighborhood[16],neighborhood[17],neighborhood[18],neighborhood[19],
+                    neighborhood[20],neighborhood[21],neighborhood[22],neighborhood[23],
+                    neighborhood[24],neighborhood[25],neighborhood[26],neighborhood[27],
+                    neighborhood[28],neighborhood[29],neighborhood[30],neighborhood[31]);
             #endif
             *upper_edits = 0;
             *lower_edits = 0;
@@ -256,7 +236,6 @@ void export_classes(unsigned int * classes,
         */
         if (my_class == MAXIMUM_CLASS) {
             n_max++;
-            //std::cerr << "GREPME Maximum point: " << i << std::endl;
         }
         else if (my_class == MINIMUM_CLASS) {
             n_min++;
@@ -273,10 +252,10 @@ void export_classes(unsigned int * classes,
                      "GPU did not agree on its own answers for " << n_insane
                   << " points." << RESET_COLOR << std::endl;
     }
-    std::cout << "Number of minima: " << n_min << std::endl;
-    std::cout << "Number of maxima: " << n_max << std::endl;
-    std::cout << "Number of saddles: " << n_saddle << std::endl;
-    std::cout << "Number of voids: " << n_void << std::endl;
+    std::cout << "Number of minima:  " << n_min << std::endl
+              << "Number of maxima:  " << n_max << std::endl
+              << "Number of saddles: " << n_saddle << std::endl
+              << "Number of voids:   " << n_void << std::endl;
     #ifdef VALIDATE_GPU
     else {
         std::cerr << OK_EMOJI << "No insanity detected in GPU self-agreement "
@@ -287,7 +266,7 @@ void export_classes(unsigned int * classes,
 
 struct thread_arguments {
     int gpu_id;
-    std::unique_ptr<TV_Data> TV;
+    std::shared_ptr<TV_Data> TV;
     int * host_flat_tv;
     int * device_tv;
     size_t tv_flat_size;
@@ -315,7 +294,7 @@ struct thread_arguments {
     thread_arguments(void) { }
     thread_arguments(
         int gpu_id1,
-        std::unique_ptr<TV_Data> TV1,
+        std::shared_ptr<TV_Data> TV1,
         int * host_flat_tv1,
         int * device_tv1,
         size_t tv_flat_size1,
@@ -340,7 +319,7 @@ struct thread_arguments {
         int shared_mem_size1,
         runtime_arguments args1) {
             gpu_id = gpu_id1;
-            TV = std::move(TV1);
+            TV = TV1;
             host_flat_tv = host_flat_tv1;
             device_tv = device_tv1;
             tv_flat_size = tv_flat_size1;
@@ -370,7 +349,7 @@ void * parallel_work(void *parallel_arguments) {
     // Unpacking
     thread_arguments *thread_args = (thread_arguments *)parallel_arguments;
     int gpu_id = thread_args->gpu_id;
-    const std::unique_ptr<TV_Data> TV = std::move(thread_args->TV);
+    const std::shared_ptr<TV_Data> TV = thread_args->TV;
     int * host_flat_tv = thread_args->host_flat_tv;
     int * device_tv = thread_args->device_tv;
     const size_t tv_flat_size = thread_args->tv_flat_size;
@@ -660,15 +639,18 @@ int main(int argc, char *argv[]) {
     // Also loads the vertex attributes (host-side) and sets them in
     // TV->vertexAttributes (one scalar per vertex)
     // PROTOTYPE: Reloads a single VTK mesh ONCE PER GPU rather than partitioning a large mesh or loading precomputed partitions -- just demonstrate scaling on similar data volume!
+    std::shared_ptr<TV_Data> TV = get_TV_from_VTK(args); // Uses: args.{filename,arrayname,partitioningname}
+    /*
     std::vector<std::unique_ptr<TV_Data>> TVs;
     for (int i = 0; i < args.n_GPUS; i++) {
         std::cout << INFO_EMOJI << "Load for GPU #" << i << std::endl;
-        /*
+        / *
         std::unique_ptr<TV_Data> TV = get_TV_from_VTK(args); // Uses: args.filename
         TVs.push_back(std::move(TV));
-        */
+        * /
         TVs.emplace_back(get_TV_from_VTK(args)); // Uses: args.filename
     }
+    */
     timer.tick_announce();
 
 
@@ -679,10 +661,10 @@ int main(int argc, char *argv[]) {
     int max_VV_guess = args.max_VV;
     // TODO: Parallelize this across unique_ptrs and possibly make max_VV independent between GPUs
     if (max_VV_guess < 0) {
-        for (int i = 0; i < args.n_GPUS; i++) {
-            int new_VV_guess = get_approx_max_VV(*TVs[i], TVs[i]->nPoints);
-            if (max_VV_guess < new_VV_guess) max_VV_guess = new_VV_guess;
-        }
+        //for (int i = 0; i < args.n_GPUS; i++) {
+        int new_VV_guess = get_approx_max_VV(*TV, TV->nPoints);
+        if (max_VV_guess < new_VV_guess) max_VV_guess = new_VV_guess;
+        //}
     }
     timer.tick_announce();
 
@@ -690,16 +672,16 @@ int main(int argc, char *argv[]) {
     timer.tick();
     // Size determinations
     // TODO: Need to be made per-device
-    size_t tv_flat_size = sizeof(int) * TVs[0]->nCells * nbVertsInCell,
-           vv_size = sizeof(int) * TVs[0]->nPoints * max_VV_guess,
-           vv_index_size = sizeof(unsigned int) * TVs[0]->nPoints,
+    size_t tv_flat_size = sizeof(int) * TV->nCells * nbVertsInCell,
+           vv_size = sizeof(int) * TV->nPoints * max_VV_guess,
+           vv_index_size = sizeof(unsigned int) * TV->nPoints,
            // #Upper, #Lower, Classification
-           partition_ids_size = sizeof(unsigned int) * TVs[0]->nPoints,
-           classes_size = sizeof(unsigned int) * TVs[0]->nPoints * 3,
+           partition_ids_size = sizeof(unsigned int) * TV->nPoints,
+           classes_size = sizeof(unsigned int) * TV->nPoints * 3,
            // Upper/lower per adjacency
-           valences_size = sizeof(int) * TVs[0]->nPoints * max_VV_guess,
-           scalars_size = sizeof(double) * TVs[0]->nPoints;
-    int n_to_compute = TVs[0]->nCells * nbVertsInCell;
+           valences_size = sizeof(int) * TV->nPoints * max_VV_guess,
+           scalars_size = sizeof(double) * TV->nPoints;
+    int n_to_compute = TV->nCells * nbVertsInCell;
     dim3 thread_block_size = 1024,
          grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
     const int shared_mem_size = sizeof(unsigned int) * (2+max_VV_guess);
@@ -740,8 +722,8 @@ int main(int argc, char *argv[]) {
     }
     // BUILDING: Partition IDs based on gpu ID for now (naive round robin)
     for (int i = 0; i < args.n_GPUS; i++) {
-        unsigned int * partition_id_settings = new unsigned int[TVs[0]->nPoints];
-        for (int j = 0; j < TVs[0]->nPoints; j++) {
+        unsigned int * partition_id_settings = new unsigned int[TV->nPoints];
+        for (int j = 0; j < TV->nPoints; j++) {
             partition_id_settings[j] = (j % args.n_GPUS) == i;
         }
         CUDA_WARN(cudaMemcpy(partition_ids[i], partition_id_settings,
@@ -758,10 +740,10 @@ int main(int argc, char *argv[]) {
     std::cout << WARN_EMOJI << "BEEG LOOP" << std::endl;
     pthread_t threads[args.n_GPUS];
     thread_arguments thread_args[args.n_GPUS];
-    const int n_points = TVs[0]->nPoints;
+    const int n_points = TV->nPoints;
     for (int i = 0; i < args.n_GPUS; i++) {
         std::cout << INFO_EMOJI << "Make thread GPU " << i << " ready" << std::endl;
-        thread_args[i] = thread_arguments(i, std::move(TVs[i]), host_flat_tvs[i], device_TVs[i], tv_flat_size,
+        thread_args[i] = thread_arguments(i, TV, host_flat_tvs[i], device_TVs[i], tv_flat_size,
                       vv_computeds[i], vv_indices[i], vv_size, vv_index_size,
                       scalar_values[i], device_scalar_values[i], scalars_size,
                       device_valences[i], valences_size,

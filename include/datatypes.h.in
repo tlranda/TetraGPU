@@ -60,7 +60,9 @@ struct TV_Data {
     // For some reason, vector of array is experimentally 20x faster than unique_ptr?
     //std::unique_ptr<vtkIdType[]> cells;
     std::vector<std::array<vtkIdType,nbVertsInCell>> cells;
+    // These vectors are std::move()'d to, rather than being initialized
     std::vector<double> vertexAttributes;
+    std::vector<unsigned int> partitionIDs;
 
     TV_Data(vtkIdType _points, vtkIdType _cells) {
         nPoints = _points;
@@ -137,8 +139,9 @@ typedef std::vector<std::vector<vtkIdType>> TT_Data;
 typedef struct argstruct {
     std::string fileName = "tiny.vtu";
     int threadNumber = 1, max_VV = -1, n_GPUS = 0;
-    std::string export_ = "";
-    std::string arrayname = "";
+    std::string export_ = "",
+                arrayname = "",
+                partitioningname = "";
     // Endian-ness may mean defaults need to be set in LSB->MSB order
     // TE starts on 3rd LSB
     std::bitset<14> arg_flags{"10000000000001"};
@@ -182,6 +185,7 @@ typedef struct argstruct {
         max_VV = other.max_VV;
         export_ = other.export_;
         arrayname = other.arrayname;
+        partitioningname = other.partitioningname;
         arg_flags = other.arg_flags;
         n_GPUS = other.n_GPUS;
     }
