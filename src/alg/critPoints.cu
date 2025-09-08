@@ -383,9 +383,9 @@ void * parallel_work(void *parallel_arguments) {
     const std::shared_ptr<TV_Data> TV = thread_args->TV;
     runtime_arguments _my_args = thread_args->args;
 
-    char timername[32];
+    char timername[32], intervalname[128];
     sprintf(timername, "Parallel worker %02d", gpu_id);
-    Timer timer(false, timername);
+    Timer timer(true, timername);
 
     // MAYBE TEMPORARY: Need to know actual GPUs if oversubscribing
     int actual_gpus, vgpu_id;
@@ -395,14 +395,16 @@ void * parallel_work(void *parallel_arguments) {
 
     // TV-localization
     // TODO: Make actually localized TV selection, max_VV determination, partition IDs also should be set here
-    timer.label_next_interval("TV localization");
+    sprintf(intervalname, "%s TV localization", timername);
+    timer.label_next_interval(intervalname);
     timer.tick();
     TV_Data * TV_local = &(*TV);
     int max_VV_local = max_VV_guess;
     timer.tick_announce();
 
     // Data Sizes & Allocations for VV
-    timer.label_next_interval("VV setup");
+    sprintf(intervalname, "%s VV setup", timername);
+    timer.label_next_interval(intervalname);
     timer.tick();
     int * host_flat_tv,
         * device_tv,
@@ -443,8 +445,8 @@ void * parallel_work(void *parallel_arguments) {
         // Device copy and host free
         // BLOCKING -- provide barrier if made asynchronous to avoid free of host
         // memory before copy completes
-        CUDA_WARN(cudaMemcpyAsync(device_tv, host_flat_tv, tv_flat_size,
-                                  cudaMemcpyHostToDevice));
+        CUDA_WARN(cudaMemcpy(device_tv, host_flat_tv, tv_flat_size,
+                             cudaMemcpyHostToDevice));
         // Free memory
         delete host_flat_tv;
 
@@ -457,9 +459,12 @@ void * parallel_work(void *parallel_arguments) {
         // TODO: Move partition settings etc up to TV localization when it is real
         int * partition_id_settings = new int[TV_local->nPoints];
         bzero(partition_id_settings, TV_local->nPoints);
-        std::cout << timername << "Partition based on x % " << _my_args.n_GPUS << " == " << gpu_id << std::endl;
+        std::cout << timername << " Partition based on x % " << _my_args.n_GPUS << " == " << gpu_id << std::endl;
         for (int j = 0; j < TV_local->nPoints; j++) {
             partition_id_settings[j] = (j % _my_args.n_GPUS) == gpu_id;
+            if (j < 10) {
+                std::cout << timername << " partition[" << j << "] = " << partition_id_settings[j] << std::endl;
+            }
         }
         CUDA_WARN(cudaMemcpy(partition, partition_id_settings,
                              partition_size, cudaMemcpyHostToDevice));
@@ -490,13 +495,15 @@ void * parallel_work(void *parallel_arguments) {
     // Only synchronized to ensure VV kernel duration is appropriately tracked
     CUDA_WARN(cudaDeviceSynchronize());
     vvKernel.tick();
-    vvKernel.label_prev_interval("GPU kernel duration");
+    sprintf(intervalname, "%s VV kernel duration", timername);
+    vvKernel.label_prev_interval(intervalname);
     // No longer need TV allocation, free it
     CUDA_WARN(cudaFree(device_tv));
     // NOTE: Asynchronous WRT CPU, we can continue to setup SFCP kernel while VV runs
 
     // Additional allocations and settings for SFCP kernel
-    timer.label_next_interval("Setup for SFCP kernel");
+    sprintf(intervalname, "%s Setup for SFCP kernel", timername);
+    timer.label_next_interval(intervalname);
     timer.tick();
     unsigned int * host_CPCs, // This one is returnable!!
                  * device_CPCs;
@@ -525,23 +532,22 @@ void * parallel_work(void *parallel_arguments) {
     }
     timer.tick_announce();
 
-    /* DEBUG: Check VV for threats to correctness / efficiency
-    timer.label_next_interval("Check for VV duplication / error");
+    // DEBUG: Check VV for threats to correctness / efficiency
+    sprintf(intervalname, "%s Check for VV duplicates / error", timername);
+    timer.label_next_interval(intervalname);
     timer.tick();
-
     // More intended for GALE integration: checks more specifically
-    gale_check_VV_Host(vv_size, vv_index_size, max_VV_local, vv_computed, vv_index);
-
+    //gale_check_VV_Host(vv_size, vv_index_size, max_VV_local, vv_computed, vv_index);
     // Detects errors but not very specifically
     check_VV_errors(vv_size,vv_index_size, vv_computed, vv_index, TV_local,
                     max_VV_local);
-
     timer.tick_announce();
-    */
+    // END DEBUG
 
 
     // Critical Points
-    timer.label_next_interval("Run " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm");
+    sprintf(intervalname, "%s Run " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm", timername);
+    timer.label_next_interval(intervalname);
     // Set kernel launch parameters here
     /*
         1) Parallelize VV on second-dimension (can early-exit block if no data
@@ -562,7 +568,7 @@ void * parallel_work(void *parallel_arguments) {
     std::cout << timername << " Launch critPoints kernel with " << n_to_compute
               << " units of work (" << grid_size.x << " blocks, "
               << thread_block_size.x << " threads per block)" << std::endl;
-    sprintf(kerneltimername, "Parallel %s kernel %02d", "VV", gpu_id);
+    sprintf(kerneltimername, "Parallel %s kernel %02d", "SFCP", gpu_id);
     Timer sfcpKernel(false, kerneltimername);
     KERNEL_WARN(critPoints<<<grid_size KERNEL_LAUNCH_SEPARATOR
                              thread_block_size KERNEL_LAUNCH_SEPARATOR
@@ -576,16 +582,19 @@ void * parallel_work(void *parallel_arguments) {
                                                 device_CPCs));
     CUDA_WARN(cudaDeviceSynchronize()); // Make algorithm timing accurate
     sfcpKernel.tick();
-    sfcpKernel.label_prev_interval("SFCP kernel");
+    sprintf(intervalname, "%s SFCP kernel", timername);
+    sfcpKernel.label_prev_interval(intervalname);
     timer.tick_announce();
-    timer.label_next_interval("Retrieve results from GPU");
+    sprintf(intervalname, "%s Retrieve results from GPU", timername);
+    timer.label_next_interval(intervalname);
     timer.tick();
     // Reminder! This is returnable memory by this function!
     CUDA_ASSERT(cudaMallocHost((void**)&host_CPCs, cpc_size));
     CUDA_WARN(cudaMemcpy(host_CPCs, device_CPCs, cpc_size, cudaMemcpyDeviceToHost));
     timer.tick_announce();
 
-    timer.label_next_interval("Free memory");
+    sprintf(intervalname, "%s Free memory", timername);
+    timer.label_next_interval(intervalname);
     timer.tick();
     if (vv_computed != nullptr) CUDA_WARN(cudaFree(vv_computed));
     if (vv_index != nullptr) CUDA_WARN(cudaFree(vv_index));
@@ -605,12 +614,15 @@ int main(int argc, char *argv[]) {
     parse(argc, argv, args);
     timer.tick();
     timer.interval("Argument parsing");
+    std::cout << std::endl << std::endl;
 
 
     // GPU intializations
     timer.label_next_interval(RED_COLOR "Create CUDA Contexts on all GPUs" RESET_COLOR);
     timer.tick();
-    for (int i = 0; i < args.n_GPUS; i++) {
+    int actual_gpus;
+    CUDA_WARN(cudaGetDeviceCount(&actual_gpus));
+    for (int i = 0; i < actual_gpus; i++) {
         cudaSetDevice(i);
         (void)cudaFree(0);
         if (! args.validate()) {
@@ -619,6 +631,7 @@ int main(int argc, char *argv[]) {
         CUDA_ASSERT(cudaDeviceSynchronize());
     }
     timer.tick_announce();
+    std::cout << std::endl << std::endl;
 
 
     /* Utilize VTK API to load the entire mesh once (read-accessible to all threads),
@@ -648,6 +661,8 @@ int main(int argc, char *argv[]) {
         if (max_VV_guess < new_VV_guess) max_VV_guess = new_VV_guess;
     }
     timer.tick_announce();
+    std::cout << std::endl << std::endl;
+
 
     std::cout << PUSHPIN_EMOJI << "Parallelizing across " << args.n_GPUS
               << " threads" << std::endl;
@@ -657,16 +672,16 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < args.n_GPUS; i++) {
         std::cout << INFO_EMOJI << "Make thread GPU " << i << " ready" << std::endl;
         thread_args[i] = thread_arguments(i, TV, max_VV_guess, args);
-        //pthread_create(&threads[i], NULL, parallel_work, (void*)&thread_args[i]);
-        return_vals[i] = (unsigned int*)parallel_work((void*)&thread_args[i]);
+        pthread_create(&threads[i], NULL, parallel_work, (void*)&thread_args[i]);
+        //return_vals[i] = (unsigned int*)parallel_work((void*)&thread_args[i]);
     }
     // Merge-able structure for final results
-    unsigned int * returned_values = new unsigned int[(3*TV->nPoints)];
     // Zeroes required for correctness
-    bzero(returned_values, 3*TV->nPoints);
+    unsigned int * returned_values = new unsigned int[(3*TV->nPoints)]();
     for (int i = 0; i < args.n_GPUS; i++) {
-        unsigned int *return_val = return_vals[i];
-        //pthread_join(threads[i], (void**)&return_val);
+        unsigned int *return_val;// = return_vals[i];
+        pthread_join(threads[i], (void**)&return_val);
+        return_vals[i] = return_val;
         timer.label_next_interval("Export results from " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm");
         timer.tick();
         // DEBUG: Show classes PER cluster returned
@@ -686,9 +701,32 @@ int main(int argc, char *argv[]) {
         // Merge results
         for (int j = 0; j < (3*TV->nPoints); j++) {
             if (return_val[j] != 0) {
+                if (returned_values[j] != 0) {
+                    /*
+                    std::cerr << "DOUBLE WRITE TO POINT " << j / 3
+                              << " (return_val index " << j << ") -- should be owned by "
+                              << i << " (" << i << " % " << args.n_GPUS << " == "
+                              << (i % args.n_GPUS) << ")" << std::endl;
+                    */
+                    int k;
+                    for (k = 0; k < i; k++) {
+                        if (return_vals[k][j] != 0) {
+                            /*
+                            std::cerr << "Also found a write to " << j
+                                      << " made by " << k << " (OLD value: "
+                                      << return_vals[k][j] << " clashes with NEW value: "
+                                      << returned_values[j] << ")" << std::endl;
+                            */
+                            break;
+                        }
+                    }
+                    if (return_vals[k][j] != returned_values[j])
+                        exit(EXIT_FAILURE);
+                }
                 returned_values[j] = return_val[j];
 
                 // DEBUG: Known inconsistency vs prior versions of this code on test dataset
+                /*
                 unsigned int localized = j/3;
                 if (localized == 5031) {
                     std::cout << "GPU " << i << " makes a write for point "
@@ -696,12 +734,15 @@ int main(int argc, char *argv[]) {
                               << " with value=" << return_val[j] << ")"
                               << std::endl;
                 }
+                */
                 // End DEBUG
             }
         }
         // NOTE: Responsible to free this memory from the thread!
-        CUDA_ASSERT(cudaFreeHost(return_val));
+        //CUDA_ASSERT(cudaFreeHost(return_val));
     }
+    std::cout << std::endl << std::endl;
+
     timer.label_next_interval("Full results");
     timer.tick();
     if (args.export_ == "/dev/null") {
