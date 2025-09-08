@@ -85,6 +85,7 @@ struct TV_Data {
         return cells.end();
     }
 };
+// deviceVV structure should be deprecable
 typedef struct deviceVV {
     int * computed;
     unsigned int * index;

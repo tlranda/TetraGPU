@@ -21,7 +21,7 @@ __global__ void critPoints(const int * __restrict__ VV,
                            const int points,
                            const int max_VV_guess,
                            const double * __restrict__ scalar_values,
-                           const unsigned int * __restrict__ partition,
+                           const int * __restrict__ partition,
                            unsigned int * __restrict__ classes);
 
 void export_classes(unsigned int * classes,
