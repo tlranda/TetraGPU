@@ -179,6 +179,10 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
         vtkDataArray* partitionAttribute = pd->GetArray(use_this_array);
         std::vector<unsigned int> partitionIDs(nPoints);
         for (vtkIdType i = 0; i < nPoints; i++) partitionIDs[i] = partitionAttribute->GetTuple1(i);
+        // Determine the number of partitions
+        std::set<unsigned int> partition_set(partitionIDs.begin(), partitionIDs.end());
+        data->n_partitions = partition_set.size();
+        std::cout << "Using " << data->n_partitions << " partitions from " << args.partitioningname << std::endl;
         data->partitionIDs = std::move(partitionIDs);
     }
 

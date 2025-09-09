@@ -63,12 +63,13 @@ struct TV_Data {
     // These vectors are std::move()'d to, rather than being initialized
     std::vector<double> vertexAttributes;
     std::vector<unsigned int> partitionIDs;
+    int n_partitions;
 
     TV_Data(vtkIdType _points, vtkIdType _cells) {
         nPoints = _points;
         nCells = _cells;
-        //cells = std::make_unique<vtkIdType[]>(_points * _cells);
         cells.resize(nCells);
+        n_partitions = 1;
     }
 
     // Foreach iterators go over the cells vector
@@ -143,6 +144,7 @@ typedef struct argstruct {
     std::string export_ = "",
                 arrayname = "",
                 partitioningname = "";
+    bool no_partitioning = false;
     // Endian-ness may mean defaults need to be set in LSB->MSB order
     // TE starts on 3rd LSB
     std::bitset<14> arg_flags{"10000000000001"};
@@ -189,6 +191,7 @@ typedef struct argstruct {
         partitioningname = other.partitioningname;
         arg_flags = other.arg_flags;
         n_GPUS = other.n_GPUS;
+        no_partitioning = other.no_partitioning;
     }
 } runtime_arguments;
 typedef std::map<const char*, std::string> option_map;

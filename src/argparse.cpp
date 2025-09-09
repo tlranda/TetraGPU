@@ -61,7 +61,8 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
     // Disable getopt's automatic error messages so we can catch it via '?'
     opterr = 0;
     // Getopt option declarations
-    const char * optionstring = "hi:t:e:a:p:v:g:"
+    const char * optionstring = "hi:t:e:a:p:v:g:n"
+        // Semicolon is newline separated to permit #ifdef guards for portions of the option string
     ;
     static struct option long_options[] = {
         {"help", no_argument, 0, 'h'},
@@ -72,6 +73,7 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
         {"partitioningname", required_argument, 0, 'p'},
         {"max_VV", required_argument, 0, 'v'},
         {"gpus", required_argument, 0, 'g'},
+        {"no_partitioning", no_argument, 0, 'n'},
         #ifdef VALIDATE_GPU
         {"validate", no_argument, &arg_flags[0], 1},
         #endif
@@ -99,6 +101,7 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
         {"partitioningname", "Array to use for multi-GPU partitioning (as string name)"},
         {"max_VV", "Override estimation of max VV with integer value"},
         {"gpus", "Set number of GPUs to use (larger than detected is warning, but will emulate behavior)"},
+        {"no_partitioning", "Disable partitioning; requires all memory to fit within single GPU"},
         #ifdef VALIDATE_GPU
         {"validate", "Check GPU results using CPU"},
         #endif
@@ -176,6 +179,9 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
             case 'g':
                 args.n_GPUS = atoi(optarg);
                 break;
+            case 'n':
+                args.no_partitioning = true;
+                break;
             case 'h':
                 std::string help = usage(argv[0],
                                          long_options,
@@ -186,6 +192,15 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
         }
     }
     // Final parsing
+    if (args.no_partitioning) {
+        if (args.n_GPUS > 1) {
+            std::cerr << WARN_EMOJI << "When partitioning is disabled, only one GPU can be utilized"
+                      << std::endl;
+        }
+        args.n_GPUS = 1;
+        // Ensure no partitioning is utilized
+        args.partitioningname = "";
+    }
     if (args.n_GPUS == 0) {
         // Ensure at least one GPU exists, else error
         int check_gpus;
