@@ -230,8 +230,8 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
         }
         else {
             std::cerr << OK_EMOJI
-                      << "Found all " << args.n_GPUS << " / " << check_gpus
-                      << " on the system. Proceed."
+                      << "Found " << check_gpus << " / " << args.n_GPUS
+                      << " GPUs requested on the system. Proceed."
                       << std::endl;
         }
     }

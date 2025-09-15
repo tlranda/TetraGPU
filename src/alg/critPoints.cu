@@ -26,7 +26,7 @@ __global__ void dummy_kernel(void) {
 #define CONSTRAIN_BLOCK 0
 // Debugging specific block executions
 /*
-#define FORCED_BLOCK_IDX 13
+#define FORCED_BLOCK_IDX 0
 #define TID_SELECTION (blockDim.x * FORCED_BLOCK_IDX) + threadIdx.x
 #define PRINT_ON 1
 #define CONSTRAIN_BLOCK 1
@@ -46,7 +46,7 @@ __global__ void critPoints(const int * __restrict__ VV,
     unsigned int *component_edits = &block_shared[0],
                  *upper_edits = &block_shared[0],
                  *lower_edits = &block_shared[1],
-                 *neighborhood = &block_shared[2];;
+                 *neighborhood = &block_shared[2];
     const int tid = TID_SELECTION;
     /*
         1) Parallelize VV on second-dimension (can early-exit block if no data
@@ -56,11 +56,25 @@ __global__ void critPoints(const int * __restrict__ VV,
     const int my_1d = tid / max_VV_guess,
               my_2d = VV[tid];
     // No work for this point's valence or out of partition
-    if (VV_index[my_1d] <= 0 || my_2d < 0 || partition[my_1d] == 0) return;
+    if (VV_index[my_1d] <= 0 || my_2d < 0 || partition[my_1d] == 0) {
+        #if PRINT_ON
+        //printf("Block %d Thread %02d exits due to partitioning or OOB data\n", blockIdx.x, threadIdx.x);
+        #endif
+        return;
+    }
     // Prefix scan as anti-duplication
     for (int i = my_1d * max_VV_guess; i < tid; i++) {
-        if (VV[i] == my_2d) return;
+        if (VV[i] == my_2d) {
+            #if PRINT_ON
+            //printf("Block %d Thread %02d exits from prefix scan\n", blockIdx.x, threadIdx.x);
+            #endif
+            return;
+        }
     }
+    #if PRINT_ON
+    // Not every thread in the warp seems to print this out, but every thread (and warp in this block!) should have the same value
+    printf("Block %d Thread %02d remains to participate in computation (VV_index=%d)\n", blockIdx.x, threadIdx.x, VV_index[my_1d]);
+    #endif
 
     // BEYOND THIS POINT, YOU ARE AN ACTUAL WORKER THREAD ON THE PROBLEM
 
@@ -95,16 +109,17 @@ __global__ void critPoints(const int * __restrict__ VV,
     bool upper_converge = false, lower_converge = false;
     // Repeat until both component directions converge
     int to_converge = 0;
-    while (!(upper_converge && lower_converge) /* DEBUG =>&& to_converge < 160 */) {
+    while (!(upper_converge && lower_converge && to_converge < max_VV_guess) /* DEBUG => */) {
         // Sanity: Guarantee zero-init
         if (threadIdx.x == 0) {
             #if PRINT_ON
+            /*
             printf("Block %d Iteration %d: upper_edits %u lower_edits %u "
                    "Neighborhood %d %d %d %d %d %d %d %d "
                                 "%d %d %d %d %d %d %d %d "
                                 "%d %d %d %d %d %d %d %d "
                                 "%d %d %d %d %d %d %d %d\n",
-                    blockIdx.x, /*inspect_step*/0, *upper_edits, *lower_edits,
+                    blockIdx.x, to_converge, *upper_edits, *lower_edits,
                     neighborhood[0],neighborhood[1],neighborhood[2],neighborhood[3],
                     neighborhood[4],neighborhood[5],neighborhood[6],neighborhood[7],
                     neighborhood[8],neighborhood[9],neighborhood[10],neighborhood[11],
@@ -113,6 +128,7 @@ __global__ void critPoints(const int * __restrict__ VV,
                     neighborhood[20],neighborhood[21],neighborhood[22],neighborhood[23],
                     neighborhood[24],neighborhood[25],neighborhood[26],neighborhood[27],
                     neighborhood[28],neighborhood[29],neighborhood[30],neighborhood[31]);
+            */
             #endif
             *upper_edits = 0;
             *lower_edits = 0;
@@ -170,24 +186,45 @@ __global__ void critPoints(const int * __restrict__ VV,
         const unsigned int upper = classes[my_classes],
                            lower = classes[my_classes+1];
         #if PRINT_ON
-        if (to_converge == 160) {
+        if (to_converge > max_VV_guess / 2) {
             printf("Block %02d took %d loops to converge\n", blockIdx.x, to_converge);
         }
         printf("Block %d Thread %02d Verdict: my_1d (%d) has %u upper and %u lower\n", blockIdx.x, threadIdx.x, my_1d, upper, lower);
         #endif
-        if (upper >= 1 && lower == 0) classes[my_classes+2] = MINIMUM_CLASS;
-        else if (upper == 0 && lower >= 1) classes[my_classes+2] = MAXIMUM_CLASS;
-        else if (/* upper >= 1 and upper == lower / **/ upper == 1 && lower == 1 /**/) classes[my_classes+2] = REGULAR_CLASS;
-        else classes[my_classes+2] = SADDLE_CLASS;
+        if (upper >= 1 && lower == 0) {
+            #if PRINT_ON
+            printf("Block %d Thread %02d set classification as %s\n", blockIdx.x, threadIdx.x, "MINIMUM");
+            #endif
+            classes[my_classes+2] = MINIMUM_CLASS;
+        }
+        else if (upper == 0 && lower >= 1) {
+            #if PRINT_ON
+            printf("Block %d Thread %02d set classification as %s\n", blockIdx.x, threadIdx.x, "MAXIMUM");
+            #endif
+            classes[my_classes+2] = MAXIMUM_CLASS;
+        }
+        else if (upper == 1 && lower == 1) {
+            #if PRINT_ON
+            printf("Block %d Thread %02d set classification as %s\n", blockIdx.x, threadIdx.x, "REGULAR");
+            #endif
+            classes[my_classes+2] = REGULAR_CLASS;
+        }
+        else {
+            #if PRINT_ON
+            printf("Block %d Thread %02d set classification as %s\n", blockIdx.x, threadIdx.x, "SADDLE");
+            #endif
+            classes[my_classes+2] = SADDLE_CLASS;
+        }
     }
+    #if PRINT_ON
+    printf("Block %d Thread %02d exits normally at end of computation\n", blockIdx.x, threadIdx.x);
+    #endif
 }
 
 void export_classes(unsigned int * classes,
-                    #if CONSTRAIN_BLOCK
-                    #else
-                    vtkIdType n_classes,
-                    #endif
+                    TV_Data & TV,
                     runtime_arguments & args) {
+    vtkIdType n_classes = TV.nPoints;
     // VOIDS can be ignored during aggregation, should all be eliminated after all GPU kernels have returned!
     std::ofstream output_fstream; // Used for file handle to indicated name
     std::streambuf * output_buffer; // Buffer may point to stdout or file handle
@@ -207,19 +244,21 @@ void export_classes(unsigned int * classes,
     // Used for actual file handling
     std::ostream out(output_buffer);
     std::string class_names[] = {"NULL", "min", "max", "regular", "saddle"};
-    vtkIdType n_insane = 0, n_min = 0, n_max = 0, n_saddle = 0, n_void = 0;
-    #if CONSTRAIN_BLOCK
-    for (vtkIdType i = FORCED_BLOCK_IDX; i < FORCED_BLOCK_IDX+1; i++)
-    #else
+    std::vector<vtkIdType> n_insane(TV.n_partitions,0),
+                           n_min(TV.n_partitions,0),
+                           n_max(TV.n_partitions,0),
+                           n_saddle(TV.n_partitions,0),
+                           n_regular(TV.n_partitions,0),
+                           n_void(TV.n_partitions,0);
     for (vtkIdType i = 0; i < n_classes; i++)
-    #endif
     {
+        const unsigned int partition_id = args.no_partitioning ? 0 : TV.partitionIDs[i];
         // The classification information is provided, then the class:
         // {# upper, # lower, class}
         // CLASSES = {'minimum': 1, 'maximum': 2, 'regular': 3, 'saddle': 4}
-        unsigned int n_upper  = classes[(i*3)],
-                     n_lower  = classes[(i*3)+1],
-                     my_class = classes[(i*3)+2];
+        const unsigned int n_upper  = classes[(i*3)],
+                           n_lower  = classes[(i*3)+1],
+                           my_class = classes[(i*3)+2];
         // Misclassification sanity checks
         if ((n_upper >= 1 && n_lower == 0 && my_class != MINIMUM_CLASS) ||
             (n_upper == 0 && n_lower >= 1 && my_class != MAXIMUM_CLASS) ||
@@ -230,7 +269,7 @@ void export_classes(unsigned int * classes,
                 << (my_class == 1 ? "Maximum" : (my_class == 2 ? "Minimum" : (my_class == 3 ? "Regular" : "Saddle")))
                 << ")" << std::endl;
             */
-            n_insane++;
+            n_insane[partition_id]++;
         }
         /*
         out << "A Class " << i << " = " << my_class << std::endl;
@@ -238,33 +277,119 @@ void export_classes(unsigned int * classes,
             << n_upper << ", Lower: " << n_lower << ")" << std::endl;
         */
         if (my_class == MAXIMUM_CLASS) {
-            n_max++;
+            n_max[partition_id]++;
+            out << "Point " << i << " in partition " << partition_id << " is a MAXIMUM" << std::endl;
         }
         else if (my_class == MINIMUM_CLASS) {
-            n_min++;
+            n_min[partition_id]++;
+            out << "Point " << i << " in partition " << partition_id << " is a MINIMUM" << std::endl;
         }
         else if (my_class == SADDLE_CLASS) {
-            n_saddle++;
+            n_saddle[partition_id]++;
+            out << "Point " << i << " in partition " << partition_id << " is a SADDLE" << std::endl;
+        }
+        else if (my_class == REGULAR_CLASS) {
+            n_regular[partition_id]++;
         }
         else if (my_class == 0) {
-            n_void++;
+            n_void[partition_id]++;
         }
     }
-    if (n_insane > 0) {
+    const vtkIdType total_insane = std::accumulate(n_insane.begin(), n_insane.end(), 0);
+    if (total_insane > 0) {
         std::cerr << WARN_EMOJI << RED_COLOR << "Insanity detected; "
-                     "GPU did not agree on its own answers for " << n_insane
+                     "GPU did not agree on its own answers for " << total_insane
                   << " points." << RESET_COLOR << std::endl;
     }
-    std::cout << "Number of minima:  " << n_min << std::endl
-              << "Number of maxima:  " << n_max << std::endl
-              << "Number of saddles: " << n_saddle << std::endl
-              << "Number of voids:   " << n_void << std::endl;
     #ifdef VALIDATE_GPU
     else {
         std::cerr << OK_EMOJI << "No insanity detected in GPU self-agreement "
                      "when classifying points." << std::endl;
     }
     #endif
+    out << "Total number of minima:  " << std::accumulate(n_min.begin(), n_min.end(), 0) << std::endl
+        << "Total number of maxima:  " << std::accumulate(n_max.begin(), n_max.end(), 0) << std::endl
+        << "Total number of saddles: " << std::accumulate(n_saddle.begin(), n_saddle.end(), 0) << std::endl
+        << "Total number of regular: " << std::accumulate(n_regular.begin(), n_regular.end(), 0) << std::endl
+        << "Total number of voids:   " << std::accumulate(n_void.begin(), n_void.end(), 0) << std::endl;
+    /* DEBUG: OUTPUT BY PARTITION */
+    for (int i = 0; i < TV.n_partitions; i++) {
+        out << "Partition " << i << " number of minima:  " << n_min[i] << std::endl
+            << "Partition " << i << " number of maxima:  " << n_max[i] << std::endl
+            << "Partition " << i << " number of saddles: " << n_saddle[i] << std::endl
+            << "Partition " << i << " number of regular: " << n_regular[i] << std::endl
+            << "Partition " << i << " number of voids:   " << n_void[i] << std::endl;
+    }
+}
+
+void full_check_VV_Host(const size_t vv_size, const size_t vv_index_size, const size_t tv_size,
+                        const int max_VV_local, const vtkIdType points, const vtkIdType cells,
+                        const int * device_vv, const unsigned int * device_vv_index,
+                        const int * device_localized_tv) {
+    // Host copy of TV-flat
+    int * host_flat_tv = nullptr;
+    CUDA_ASSERT(cudaMallocHost((void**)&host_flat_tv, tv_size));
+    CUDA_WARN(cudaMemcpy(host_flat_tv, device_localized_tv, tv_size, cudaMemcpyDeviceToHost));
+    // Host copy of VV data
+    int * host_vv = nullptr;
+    CUDA_ASSERT(cudaMallocHost((void**)&host_vv, vv_size));
+    CUDA_WARN(cudaMemcpy(host_vv, device_vv, vv_size, cudaMemcpyDeviceToHost));
+    unsigned int * host_vv_index = nullptr;
+    CUDA_ASSERT(cudaMallocHost((void**)&host_vv_index, vv_index_size));
+    CUDA_WARN(cudaMemcpy(host_vv_index, device_vv_index, vv_index_size, cudaMemcpyDeviceToHost));
+
+    // Rigorously test to find all combinations using CPU
+    for (vtkIdType i = 0; i < cells; i++) {
+        int tv_cell[4] = { host_flat_tv[(i*4)+0],
+                           host_flat_tv[(i*4)+1],
+                           host_flat_tv[(i*4)+2],
+                           host_flat_tv[(i*4)+3] };
+        for (int idx = 0; idx < 4; idx++) {
+            int look_match = tv_cell[idx];
+            unsigned int max_index = host_vv_index[look_match],
+                         base_index = look_match*max_VV_local;
+
+            for (int idx2 = 0; idx2 < 4; idx2++) {
+                if (idx2 == idx) continue;
+
+                int look_for = tv_cell[idx2];
+                bool found = false;
+                for (unsigned int vv_index = 0; vv_index < max_index; vv_index++) {
+                    if (host_vv[base_index+vv_index] == look_for) {
+                        found = true;
+                    }
+                }
+                if (!found) {
+                    std::cerr << EXCLAIM_EMOJI <<  "Failed to locate edge for cell "
+                              << i << ": (" << look_match << ", " << look_for
+                              << ")" << std::endl;
+                    exit(EXIT_FAILURE);
+                }
+            }
+        }
+    }
+    std::cout << OK_EMOJI << "All VV entries found for TV" << std::endl;
+    // Test outside of boundaries
+    for (vtkIdType i = 0; i < points; i++) {
+        unsigned int base_index = i * max_VV_local,
+                     max_index = (i+1) * max_VV_local,
+                     fill_depth = host_vv_index[i];
+        for (unsigned int idx = base_index+fill_depth; idx < max_index; idx++) {
+            if (host_vv[idx] != -1) {
+                std::cerr << EXCLAIM_EMOJI << "VV has junk in point " << i
+                          << " entries, starting as soon as index " << idx-base_index
+                          << " / " << fill_depth << "(max-to-be-filled: "
+                          << max_VV_local << ")" << std::endl;
+                exit(EXIT_FAILURE);
+            }
+        }
+    }
+    std::cout << OK_EMOJI << "No junk detected OOB for VV" << std::endl;
+
+    // No memory leaks! Deallocate!
+    CUDA_WARN(cudaFreeHost(host_flat_tv));
+    CUDA_WARN(cudaFreeHost(host_vv));
+    CUDA_WARN(cudaFreeHost(host_vv_index));
 }
 
 void gale_check_VV_Host(size_t vv_size, size_t vv_index_size, int max_VV_local,
@@ -407,13 +532,14 @@ void * parallel_work(void *parallel_arguments) {
     }
     /*
     unsigned int approved_partition_ids[] =
-                    //{0,2,3,5,8,12}; // SAFE IDS
-                    {1,4,6,7,9,10,11,13,14}; // UNSAFE IDS
+                    {0,}; // SAFE IDS -- formerly also included: {0,2,3,5,8,12}
+                    //{1,4,6,7,9,10,11,13,14}; // UNSAFE IDS
     */
-    for (; my_partition_id < TV->n_partitions; my_partition_id += n_parallel) {
-    //for (unsigned int my_partition_id : approved_partition_ids) {
+    for (; my_partition_id < TV->n_partitions; my_partition_id += n_parallel)
+    //for (unsigned int my_partition_id : approved_partition_ids)
+    {
         // TV-localization
-        sprintf(intervalname, "%s TV localization", timername);
+        sprintf(intervalname, "%s TV localization for partition %d", timername, my_partition_id);
         timer.label_next_interval(intervalname);
         timer.tick();
         TV_Data * TV_local;
@@ -424,6 +550,10 @@ void * parallel_work(void *parallel_arguments) {
         if (_my_args.no_partitioning) {
             TV_local = &(*TV);
             max_VV_local = get_approx_max_VV(*TV_local, TV_local->nPoints);
+            // Ensure partitioning is set correctly
+            TV_local->n_partitions = 1;
+            std::vector<unsigned int> local_partitionIDs(TV_local->nPoints, 1);
+            TV_local->partitionIDs = std::move(local_partitionIDs);
         }
         else {
             // Determine the number of points and cells
@@ -605,6 +735,9 @@ void * parallel_work(void *parallel_arguments) {
         vvKernel.tick();
         sprintf(intervalname, "%s VV kernel duration", timername);
         vvKernel.label_prev_interval(intervalname);
+        // DEBUG: Check that every point in VV is properly found
+        full_check_VV_Host(vv_size, vv_index_size, tv_flat_size, max_VV_local,
+                           TV_local->nPoints, TV_local->nCells, vv_computed, vv_index, device_tv);
         // No longer need TV allocation, free it
         CUDA_WARN(cudaFree(device_tv));
         // NOTE: Asynchronous WRT CPU, we can continue to setup SFCP kernel while VV runs
@@ -636,6 +769,8 @@ void * parallel_work(void *parallel_arguments) {
             }
             // NOT ASYNC to prevent early free
             CUDA_WARN(cudaMemcpy(device_scalar_values, scalar_values, scalar_values_size, cudaMemcpyHostToDevice));
+            // We need CPCs to be zero'd out
+            CUDA_WARN(cudaMemset(device_CPCs, 0, cpc_size));
             delete scalar_values;
         }
         timer.tick_announce();
@@ -698,6 +833,8 @@ void * parallel_work(void *parallel_arguments) {
         timer.tick();
         // Reminder! This is returnable memory by this function!
         CUDA_ASSERT(cudaMallocHost((void**)&host_CPCs, cpc_size));
+        // In the event 0-values are intended, zero out the buffer PRIOR to copying?
+        memset(host_CPCs, 0, cpc_size);
         CUDA_WARN(cudaMemcpy(host_CPCs, device_CPCs, cpc_size, cudaMemcpyDeviceToHost));
         if (_my_args.no_partitioning) {
             // Directly inject to return value via free and swap
@@ -707,16 +844,36 @@ void * parallel_work(void *parallel_arguments) {
         else {
             // Restore original dense mapping (accumulates between loop iterations)
             for (vtkIdType i = 0; i < TV_local->nPoints; i++) {
-                if (TV_local->partitionIDs[i] != 0) {
+                if (TV_local->partitionIDs[i] == 0) {
                     // Point isn't classified by THIS partition, but do NOT overwrite it!
                     // It may have been written to by a prior loop iteration!
                     continue;
                 }
                 vtkIdType dense_basis = inverse_partition_mapping[i] * 3,
                           host_basis  = i * 3;
+                if (dense_CPCs[dense_basis  ] != 0) {
+                    std::cerr << WARN_EMOJI << "Double-write to point " << i << std::endl;
+                    exit(EXIT_FAILURE);
+                }
                 dense_CPCs[dense_basis  ] = host_CPCs[host_basis];
+                if (dense_CPCs[dense_basis+1] != 0) {
+                    std::cerr << WARN_EMOJI << "Double-write to point " << i << std::endl;
+                    exit(EXIT_FAILURE);
+                }
                 dense_CPCs[dense_basis+1] = host_CPCs[host_basis+1];
+                if (dense_CPCs[dense_basis+2] != 0) {
+                    std::cerr << WARN_EMOJI << "Double-write to point " << i << std::endl;
+                    exit(EXIT_FAILURE);
+                }
                 dense_CPCs[dense_basis+2] = host_CPCs[host_basis+2];
+                // DEBUG: Announce values
+                /*
+                std::cout << "Set dense CPCs values for point " << i << " between indices "
+                          << dense_basis << "-" << dense_basis+2 << " (values: "
+                          << dense_CPCs[dense_basis  ] << ", "
+                          << dense_CPCs[dense_basis+1] << ", "
+                          << dense_CPCs[dense_basis+2] << ")" << std::endl;
+                */
             }
         }
         timer.tick_announce();
@@ -724,8 +881,8 @@ void * parallel_work(void *parallel_arguments) {
         sprintf(intervalname, "%s Free memory", timername);
         timer.label_next_interval(intervalname);
         timer.tick();
-        //if (vv_computed != nullptr) CUDA_WARN(cudaFree(vv_computed));
-        //if (vv_index != nullptr) CUDA_WARN(cudaFree(vv_index));
+        if (vv_computed != nullptr) CUDA_WARN(cudaFree(vv_computed));
+        if (vv_index != nullptr) CUDA_WARN(cudaFree(vv_index));
         if (partition != nullptr) CUDA_WARN(cudaFree(partition));
         if (device_CPCs != nullptr) CUDA_WARN(cudaFree(device_CPCs));
         if (device_valences != nullptr) CUDA_WARN(cudaFree(device_valences));
@@ -812,10 +969,7 @@ int main(int argc, char *argv[]) {
         }
         else {
             export_classes(return_val,
-                           #if CONSTRAIN_BLOCK
-                           #else
-                           TV->nPoints,
-                           #endif
+                           (*TV),
                            args);
         }
         timer.tick_announce();
@@ -872,10 +1026,7 @@ int main(int argc, char *argv[]) {
     }
     else {
         export_classes(returned_values,
-                       #if CONSTRAIN_BLOCK
-                       #else
-                       TV->nPoints,
-                       #endif
+                       (*TV),
                        args);
     }
     delete[] returned_values;
