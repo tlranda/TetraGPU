@@ -361,18 +361,19 @@ void export_classes(unsigned int * classes,
 void full_check_VV_Host(const size_t vv_size, const size_t vv_index_size, const size_t tv_size,
                         const int max_VV_local, const vtkIdType points, const vtkIdType cells,
                         const int * device_vv, const unsigned int * device_vv_index,
-                        const int * device_localized_tv) {
+                        const int * device_localized_tv, cudaStream_t stream) {
     // Host copy of TV-flat
     int * host_flat_tv = nullptr;
     CUDA_ASSERT(cudaMallocHost((void**)&host_flat_tv, tv_size));
-    CUDA_WARN(cudaMemcpy(host_flat_tv, device_localized_tv, tv_size, cudaMemcpyDeviceToHost));
+    CUDA_WARN(cudaMemcpyAsync(host_flat_tv, device_localized_tv, tv_size, cudaMemcpyDeviceToHost, stream));
     // Host copy of VV data
     int * host_vv = nullptr;
     CUDA_ASSERT(cudaMallocHost((void**)&host_vv, vv_size));
-    CUDA_WARN(cudaMemcpy(host_vv, device_vv, vv_size, cudaMemcpyDeviceToHost));
+    CUDA_WARN(cudaMemcpyAsync(host_vv, device_vv, vv_size, cudaMemcpyDeviceToHost, stream));
     unsigned int * host_vv_index = nullptr;
     CUDA_ASSERT(cudaMallocHost((void**)&host_vv_index, vv_index_size));
-    CUDA_WARN(cudaMemcpy(host_vv_index, device_vv_index, vv_index_size, cudaMemcpyDeviceToHost));
+    CUDA_WARN(cudaMemcpyAsync(host_vv_index, device_vv_index, vv_index_size, cudaMemcpyDeviceToHost, stream));
+    CUDA_WARN(cudaStreamSynchronize(stream));
 
     // Rigorously test to find all combinations using CPU
     for (vtkIdType i = 0; i < cells; i++) {
@@ -430,13 +431,14 @@ void full_check_VV_Host(const size_t vv_size, const size_t vv_index_size, const 
 }
 
 void gale_check_VV_Host(size_t vv_size, size_t vv_index_size, int max_VV_local,
-                        int * device_vv, unsigned int * device_vv_index) {
+                        int * device_vv, unsigned int * device_vv_index, cudaStream_t stream) {
     int * host_vv = nullptr;
     unsigned int * host_vv_index = nullptr;
     CUDA_ASSERT(cudaMallocHost((void**)&host_vv, vv_size));
     CUDA_ASSERT(cudaMallocHost((void**)&host_vv_index, vv_index_size));
-    CUDA_WARN(cudaMemcpy(host_vv, device_vv, vv_size, cudaMemcpyDeviceToHost));
-    CUDA_WARN(cudaMemcpy(host_vv_index, device_vv_index, vv_index_size, cudaMemcpyDeviceToHost));
+    CUDA_WARN(cudaMemcpyAsync(host_vv, device_vv, vv_size, cudaMemcpyDeviceToHost, stream));
+    CUDA_WARN(cudaMemcpyAsync(host_vv_index, device_vv_index, vv_index_size, cudaMemcpyDeviceToHost, stream));
+    CUDA_WARN(cudaStreamSynchronize(stream));
     int MAX_PRINT = 100;
     for (int i = 0; i < 4; i++) {
         std::cout << "Sanity check VV[" << i << "] with size " << host_vv_index[i] << std::endl;
@@ -462,18 +464,17 @@ void gale_check_VV_Host(size_t vv_size, size_t vv_index_size, int max_VV_local,
 
 void check_VV_errors(size_t vv_size, size_t vv_index_size,
                      int * vv_computed, unsigned int * vv_index,
-                     TV_Data * TV, int max_VV_guess) {
-
-
+                     TV_Data * TV, int max_VV_guess, cudaStream_t stream) {
     unsigned int * host_vv_index = nullptr;
     CUDA_ASSERT(cudaMallocHost((void**)&host_vv_index, vv_index_size));
-    CUDA_WARN(cudaMemcpy(host_vv_index, vv_index, vv_index_size, cudaMemcpyDeviceToHost));
+    CUDA_WARN(cudaMemcpyAsync(host_vv_index, vv_index, vv_index_size, cudaMemcpyDeviceToHost, stream));
     unsigned int duplicates = 0, minmax_size = 0, actual_size = 0;
     std::vector<unsigned int> overflow = std::vector<unsigned int>();
     int * host_vv = nullptr;
     // Determine the real size of de-duplicated VV
     CUDA_ASSERT(cudaMallocHost((void**)&host_vv, vv_size));
-    CUDA_WARN(cudaMemcpy(host_vv, vv_computed, vv_size, cudaMemcpyDeviceToHost));
+    CUDA_WARN(cudaMemcpyAsync(host_vv, vv_computed, vv_size, cudaMemcpyDeviceToHost, stream));
+    CUDA_WARN(cudaStreamSynchronize(stream));
     std::vector<unsigned int> deduped_length(TV->nPoints);
     std::vector<int> known_points(max_VV_guess);
     unsigned int max_maybe_duped_degree = 0, max_actual_degree = 0;
@@ -548,15 +549,26 @@ void * parallel_work(void *parallel_arguments) {
     const std::shared_ptr<TV_Data> TV = thread_args->TV;
     runtime_arguments _my_args = thread_args->args;
 
+    // Set up parallel timer
     char timername[32], intervalname[128];
     sprintf(timername, "Parallel worker %02d", gpu_id);
     Timer timer(true, timername);
 
-    int actual_gpus, vgpu_id;
-    unsigned int my_partition_id = gpu_id;
+    // Establish GPU to utilize and allocate a stream for its operations
+    int actual_gpus, vgpu_id, my_partition_id = gpu_id;
     CUDA_WARN(cudaGetDeviceCount(&actual_gpus));
     vgpu_id = (gpu_id % actual_gpus);
     cudaSetDevice(vgpu_id);
+    /* MAYBE: Retain primary device context
+    CUcontext cuContex;
+    CUdevice cuDevice;
+    // Port CUDA_SAFE_CALL() to include/cuda_safety.h if using this portion of API, as it is annoyingly different
+    CUDA_SAFE_CALL(cuDeviceGet(&cuDevice, vgpu_id);
+    CUDA_SAFE_CALL(cuDevicePrimaryCtxRetain(&cuContext, cuDevice));
+    */
+    // Set device stream
+    cudaStream_t thread_stream;
+    CUDA_WARN(cudaStreamCreate(&thread_stream));
 
     // Returnable memory has to be in dense format!
     unsigned int * dense_CPCs;
@@ -568,12 +580,11 @@ void * parallel_work(void *parallel_arguments) {
         my_partition_id = 0; // Guarantee single iteration
     }
     /*
-    unsigned int approved_partition_ids[] =
-                    {9,}; // SAFE IDS -- formerly also included: {0,2,3,5,8,12}
-                    //{1,4,6,7,9,10,11,13,14}; // UNSAFE IDS
+    // DEBUG: Only loop certain partitions
+    unsigned int approved_partition_ids[] = {9,};
+    for (unsigned int my_partition_id : approved_partition_ids)
     */
     for (; my_partition_id < TV->n_partitions; my_partition_id += n_parallel)
-    //for (unsigned int my_partition_id : approved_partition_ids)
     {
         // TV-localization
         sprintf(intervalname, "%s TV localization for partition %d", timername, my_partition_id);
@@ -581,13 +592,14 @@ void * parallel_work(void *parallel_arguments) {
         timer.tick();
         TV_Data * TV_local;
         int max_VV_local;
+        // Have to preserve relative vertex ID ordering for semantic consistency between --no_partition and utilizing partitions
         std::set<vtkIdType> included_points;
         std::vector<vtkIdType> included_cells, inverse_partition_mapping;
         // Shortcut available when no partitioning used
         if (_my_args.no_partitioning) {
             TV_local = &(*TV);
             max_VV_local = get_approx_max_VV(*TV_local, TV_local->nPoints);
-            // Ensure partitioning is set correctly
+            // Ensure partitioning data is set correctly
             TV_local->n_partitions = 1;
             std::vector<unsigned int> local_partitionIDs(TV_local->nPoints, 1);
             TV_local->partitionIDs = std::move(local_partitionIDs);
@@ -600,18 +612,16 @@ void * parallel_work(void *parallel_arguments) {
             std::vector<double> vertexAttributes;
             // First order inclusion: All points of any tetra with one or more vertices included in partition
             for (const auto & VertList : (*TV)) {
-                bool included = false;
                 for (const vtkIdType vertex : VertList) {
                     if (TV->partitionIDs[vertex] == my_partition_id) {
-                        included = true;
-                        break;
-                        // We need to add ALL vertices into the partition/remapping
-                    }
-                }
-                if (included) {
-                    included_cells.emplace_back(nth_tetra);
-                    for (const vtkIdType vertex : VertList) {
-                        included_points.insert(vertex);
+                        included_cells.emplace_back(nth_tetra);
+
+                        // Include ALL vertices in this tetra in the partition
+                        for (const vtkIdType incl_vertex : VertList) {
+                            // Set object will not insert duplicates
+                            included_points.insert(incl_vertex);
+                        }
+                        break; // No need to continue iterating this tetra
                     }
                 }
                 nth_tetra++;
@@ -638,7 +648,7 @@ void * parallel_work(void *parallel_arguments) {
             }
             // Now fetch data for partition inclusion and scalars using inv map
             for (vtkIdType vertex : inverse_partition_mapping) {
-                // Partition == 0 gets you skipped
+                // Partition == 0 will skip classification in SFCP kernel
                 partition_IDs.emplace_back(TV->partitionIDs[vertex] == my_partition_id);
                 vertexAttributes.emplace_back(TV->vertexAttributes[vertex]);
             }
@@ -714,23 +724,26 @@ void * parallel_work(void *parallel_arguments) {
             // Device copy and host free
             // BLOCKING -- provide barrier if made asynchronous to avoid free of host
             // memory before copy completes
-            CUDA_WARN(cudaMemcpy(device_tv, host_flat_tv, tv_flat_size,
-                                 cudaMemcpyHostToDevice));
+            CUDA_WARN(cudaMemcpyAsync(device_tv, host_flat_tv, tv_flat_size,
+                                      cudaMemcpyHostToDevice, thread_stream));
+            CUDA_WARN(cudaStreamSynchronize(thread_stream));
             // Free memory
             delete host_flat_tv;
 
 
             // Pre-populate vv!
-            CUDA_WARN(cudaMemset(vv_computed, -1, vv_size));
-            CUDA_WARN(cudaMemset(vv_index, 0, vv_index_size));
+            CUDA_WARN(cudaMemsetAsync(vv_computed, -1, vv_size, thread_stream));
+            CUDA_WARN(cudaMemsetAsync(vv_index, 0, vv_index_size, thread_stream));
 
 
             int * partition_id_settings = new int[TV_local->nPoints]();
             for (int j = 0; j < TV_local->nPoints; j++) {
                 partition_id_settings[j] = TV_local->partitionIDs[j];
             }
-            CUDA_WARN(cudaMemcpy(partition, partition_id_settings,
-                                 partition_size, cudaMemcpyHostToDevice));
+            CUDA_WARN(cudaMemcpyAsync(partition, partition_id_settings,
+                                      partition_size, cudaMemcpyHostToDevice,
+                                      thread_stream));
+            CUDA_WARN(cudaStreamSynchronize(thread_stream));
             delete partition_id_settings;
         }
 
@@ -750,32 +763,32 @@ void * parallel_work(void *parallel_arguments) {
         /*
         // DEBUG: Super serialized VV kernel
         for (int i = 0; i < TV_local->nCells; i++) {
-            if (i == 124) {
-                std::cout << "Here ya go" << std::endl;
-            }
-            KERNEL_WARN(VV_kernel<<<1 KERNEL_LAUNCH_SEPARATOR 4>>>(
+            KERNEL_WARN(VV_kernel<<<1 KERNEL_LAUNCH_SEPARATOR
+                                    4 KERNEL_LAUNCH_SEPARATOR
+                                    0 KERNEL_LAUNCH SEPARATOR
+                                    thread_stream>>>(
                         &device_tv[i*4], 1, 4, max_VV_local, vv_index, vv_computed));
-            CUDA_WARN(cudaDeviceSynchronize());
-            if (i == 124) {
-                std::cout << "Post-kernel is here" << std::endl;
-            }
+            CUDA_WARN(cudaStreamSynchronize(thread_stream));
         }
         */
         KERNEL_WARN(VV_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
-                                thread_block_size>>>(device_tv,
+                                thread_block_size KERNEL_LAUNCH_SEPARATOR
+                                0 KERNEL_LAUNCH_SEPARATOR
+                                thread_stream>>>(device_tv,
                                     TV_local->nCells,
                                     TV_local->nPoints,
                                     max_VV_local,
                                     vv_index,
                                     vv_computed));
         // Only synchronized to ensure VV kernel duration is appropriately tracked
-        CUDA_WARN(cudaDeviceSynchronize());
+        CUDA_WARN(cudaStreamSynchronize(thread_stream));
         vvKernel.tick();
         sprintf(intervalname, "%s VV kernel duration", timername);
         vvKernel.label_prev_interval(intervalname);
         // DEBUG: Check that every point in VV is properly found
         full_check_VV_Host(vv_size, vv_index_size, tv_flat_size, max_VV_local,
-                           TV_local->nPoints, TV_local->nCells, vv_computed, vv_index, device_tv);
+                           TV_local->nPoints, TV_local->nCells, vv_computed,
+                           vv_index, device_tv, thread_stream);
         // No longer need TV allocation, free it
         CUDA_WARN(cudaFree(device_tv));
         // NOTE: Asynchronous WRT CPU, we can continue to setup SFCP kernel while VV runs
@@ -805,10 +818,13 @@ void * parallel_work(void *parallel_arguments) {
                 //std::cerr << "TV value for point " << j << ": " << TV_local->vertexAttributes[j] << std::endl;
                 //std::cout << "A Scalar value for point " << j << ": " << scalar_values[j] << std::endl;
             }
-            // NOT ASYNC to prevent early free
-            CUDA_WARN(cudaMemcpy(device_scalar_values, scalar_values, scalar_values_size, cudaMemcpyHostToDevice));
+            // MADE BLOCKING to prevent early free
+            CUDA_WARN(cudaMemcpyAsync(device_scalar_values, scalar_values,
+                                      scalar_values_size, cudaMemcpyHostToDevice,
+                                      thread_stream));
             // We need CPCs to be zero'd out
-            CUDA_WARN(cudaMemset(device_CPCs, 0, cpc_size));
+            CUDA_WARN(cudaMemsetAsync(device_CPCs, 0, cpc_size, thread_stream));
+            CUDA_WARN(cudaStreamSynchronize(thread_stream));
             delete scalar_values;
         }
         timer.tick_announce();
@@ -821,7 +837,7 @@ void * parallel_work(void *parallel_arguments) {
         //gale_check_VV_Host(vv_size, vv_index_size, max_VV_local, vv_computed, vv_index);
         // Detects errors but not very specifically
         check_VV_errors(vv_size,vv_index_size, vv_computed, vv_index, TV_local,
-                        max_VV_local);
+                        max_VV_local, thread_stream);
         timer.tick_announce();
         // END DEBUG
 
@@ -853,7 +869,8 @@ void * parallel_work(void *parallel_arguments) {
         Timer sfcpKernel(false, kerneltimername);
         KERNEL_WARN(critPoints<<<grid_size KERNEL_LAUNCH_SEPARATOR
                                  thread_block_size KERNEL_LAUNCH_SEPARATOR
-                                 shared_mem_size>>>(vv_computed,
+                                 shared_mem_size KERNEL_LAUNCH_SEPARATOR
+                                 thread_stream>>>(vv_computed,
                                                     vv_index,
                                                     device_valences,
                                                     TV_local->nPoints,
@@ -861,7 +878,7 @@ void * parallel_work(void *parallel_arguments) {
                                                     device_scalar_values,
                                                     partition,
                                                     device_CPCs));
-        CUDA_WARN(cudaDeviceSynchronize()); // Make algorithm timing accurate
+        CUDA_WARN(cudaStreamSynchronize(thread_stream)); // Make algorithm timing accurate
         sfcpKernel.tick();
         sprintf(intervalname, "%s SFCP kernel", timername);
         sfcpKernel.label_prev_interval(intervalname);
@@ -873,7 +890,9 @@ void * parallel_work(void *parallel_arguments) {
         CUDA_ASSERT(cudaMallocHost((void**)&host_CPCs, cpc_size));
         // In the event 0-values are intended, zero out the buffer PRIOR to copying?
         memset(host_CPCs, 0, cpc_size);
-        CUDA_WARN(cudaMemcpy(host_CPCs, device_CPCs, cpc_size, cudaMemcpyDeviceToHost));
+        // Synchronous wrt this thread, not others
+        CUDA_WARN(cudaMemcpyAsync(host_CPCs, device_CPCs, cpc_size, cudaMemcpyDeviceToHost, thread_stream));
+        CUDA_WARN(cudaStreamSynchronize(thread_stream));
         if (_my_args.no_partitioning) {
             // Directly inject to return value via free and swap
             CUDA_WARN(cudaFreeHost(dense_CPCs));
@@ -889,20 +908,8 @@ void * parallel_work(void *parallel_arguments) {
                 }
                 vtkIdType dense_basis = inverse_partition_mapping[i] * 3,
                           host_basis  = i * 3;
-                if (dense_CPCs[dense_basis  ] != 0) {
-                    std::cerr << WARN_EMOJI << "Double-write to point " << i << std::endl;
-                    exit(EXIT_FAILURE);
-                }
-                dense_CPCs[dense_basis  ] = host_CPCs[host_basis];
-                if (dense_CPCs[dense_basis+1] != 0) {
-                    std::cerr << WARN_EMOJI << "Double-write to point " << i << std::endl;
-                    exit(EXIT_FAILURE);
-                }
+                dense_CPCs[dense_basis  ] = host_CPCs[host_basis  ];
                 dense_CPCs[dense_basis+1] = host_CPCs[host_basis+1];
-                if (dense_CPCs[dense_basis+2] != 0) {
-                    std::cerr << WARN_EMOJI << "Double-write to point " << i << std::endl;
-                    exit(EXIT_FAILURE);
-                }
                 dense_CPCs[dense_basis+2] = host_CPCs[host_basis+2];
                 // DEBUG: Announce values
                 /*
@@ -925,6 +932,7 @@ void * parallel_work(void *parallel_arguments) {
         if (device_CPCs != nullptr) CUDA_WARN(cudaFree(device_CPCs));
         if (device_valences != nullptr) CUDA_WARN(cudaFree(device_valences));
         if (device_scalar_values != nullptr) CUDA_WARN(cudaFree(device_scalar_values));
+        if (host_CPCs != nullptr) CUDA_WARN(cudaFreeHost(host_CPCs));
         timer.tick_announce();
     }
     return (void*)dense_CPCs;
@@ -998,9 +1006,10 @@ int main(int argc, char *argv[]) {
         unsigned int *return_val;// = return_vals[i];
         pthread_join(threads[i], (void**)&return_val);
         return_vals[i] = return_val;
+        /*
+        // DEBUG: Show classes PER cluster returned
         timer.label_next_interval("Export results from " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm");
         timer.tick();
-        // DEBUG: Show classes PER cluster returned
         if (args.export_ == "/dev/null") {
             std::cerr << WARN_EMOJI << "Output to /dev/null omits function call entirely"
                       << std::endl;
@@ -1011,6 +1020,7 @@ int main(int argc, char *argv[]) {
                            args);
         }
         timer.tick_announce();
+        */
         // Merge results
         for (int j = 0; j < (3*TV->nPoints); j++) {
             if (return_val[j] != 0) {
@@ -1037,22 +1047,11 @@ int main(int argc, char *argv[]) {
                         exit(EXIT_FAILURE);
                 }
                 returned_values[j] = return_val[j];
-
-                // DEBUG: Known inconsistency vs prior versions of this code on test dataset
-                /*
-                unsigned int localized = j/3;
-                if (localized == 5031) {
-                    std::cout << "GPU " << i << " makes a write for point "
-                              << localized << "(sub-index " << j % 3
-                              << " with value=" << return_val[j] << ")"
-                              << std::endl;
-                }
-                */
-                // End DEBUG
             }
         }
         // NOTE: Responsible to free this memory from the thread!
-        //CUDA_ASSERT(cudaFreeHost(return_val));
+        CUDA_ASSERT(cudaFreeHost(return_val));
+        return_vals[i] = nullptr;
     }
     std::cout << std::endl << std::endl;
 
@@ -1068,6 +1067,7 @@ int main(int argc, char *argv[]) {
                        args);
     }
     delete[] returned_values;
+    // Close timers
     timer.tick_announce();
     all_critical_points.tick_announce();
 }
