@@ -306,7 +306,8 @@ void export_classes(unsigned int * classes,
             n_insane[partition_id]++;
         }
         // Output formats
-        out << "A Class " << i << " = " << my_class << std::endl;
+        if (args.debug > NO_DEBUG)
+            out << "A Class " << i << " = " << my_class << std::endl;
         /*
         out << "A Class " << i << " = " << class_names[my_class] << "(Upper: "
             << n_upper << ", Lower: " << n_lower << ")" << std::endl;
@@ -347,15 +348,15 @@ void export_classes(unsigned int * classes,
         << "Total number of saddles: " << std::accumulate(n_saddle.begin(), n_saddle.end(), 0) << std::endl
         << "Total number of regular: " << std::accumulate(n_regular.begin(), n_regular.end(), 0) << std::endl
         << "Total number of voids:   " << std::accumulate(n_void.begin(), n_void.end(), 0) << std::endl;
-    /* DEBUG: OUTPUT BY PARTITION
-    for (int i = 0; i < TV.n_partitions; i++) {
-        out << "Partition " << i << " number of minima:  " << n_min[i] << std::endl
-            << "Partition " << i << " number of maxima:  " << n_max[i] << std::endl
-            << "Partition " << i << " number of saddles: " << n_saddle[i] << std::endl
-            << "Partition " << i << " number of regular: " << n_regular[i] << std::endl
-            << "Partition " << i << " number of voids:   " << n_void[i] << std::endl;
+    if (args.debug == DEBUG_MAX) {
+        for (int i = 0; i < TV.n_partitions; i++) {
+            out << "Partition " << i << " number of minima:  " << n_min[i] << std::endl
+                << "Partition " << i << " number of maxima:  " << n_max[i] << std::endl
+                << "Partition " << i << " number of saddles: " << n_saddle[i] << std::endl
+                << "Partition " << i << " number of regular: " << n_regular[i] << std::endl
+                << "Partition " << i << " number of voids:   " << n_void[i] << std::endl;
+        }
     }
-    */
 }
 
 void full_check_VV_Host(const size_t vv_size, const size_t vv_index_size, const size_t tv_size,
@@ -549,6 +550,19 @@ void * parallel_work(void *parallel_arguments) {
     const std::shared_ptr<TV_Data> TV = thread_args->TV;
     runtime_arguments _my_args = thread_args->args;
 
+    std::streambuf * output_buffer;
+    std::ofstream output_fstream;
+    if (_my_args.threadNumber == 1) {
+        output_buffer = std::cout.rdbuf();
+    }
+    else {
+        char logname[32];
+        sprintf(logname, "thread_%02d.log", gpu_id);
+        output_fstream.open(logname);
+        output_buffer = output_fstream.rdbuf();
+    }
+    std::ostream out(output_buffer);
+
     // Set up parallel timer
     char timername[32], intervalname[128];
     sprintf(timername, "Parallel worker %02d", gpu_id);
@@ -669,17 +683,17 @@ void * parallel_work(void *parallel_arguments) {
                 }
             }
             if (_my_args.debug > NO_DEBUG) {
-                std::cout << INFO_EMOJI << timername << " works on partition "
-                          << my_partition_id << " with " << n_points << " points and "
-                          << n_cells << " cells (" << n_in_partition
-                          << " points are within partition)" << std::endl;
+                out << INFO_EMOJI << timername << " works on partition "
+                    << my_partition_id << " with " << n_points << " points and "
+                    << n_cells << " cells (" << n_in_partition
+                    << " points are within partition)" << std::endl;
             }
         }
         if (max_VV_override != -1) {
             if (_my_args.debug > NO_DEBUG) {
-                std::cout << INFO_EMOJI << timername << " detected max_VV for partition "
-                          << max_VV_local << ", but will be overridden by max_VV"
-                          << max_VV_override << std::endl;
+                out << INFO_EMOJI << timername << " detected max_VV for partition "
+                    << max_VV_local << ", but will be overridden by max_VV"
+                    << max_VV_override << std::endl;
             }
             max_VV_local = max_VV_override;
         }
@@ -699,13 +713,13 @@ void * parallel_work(void *parallel_arguments) {
                vv_size = sizeof(int) * TV_local->nPoints * max_VV_local,
                vv_index_size = sizeof(unsigned int) * TV_local->nPoints;
         if (_my_args.debug > DEBUG_MIN) {
-            std::cout << PUSHPIN_EMOJI << timername << " will use GPU " << gpu_id
-                      << " (Actual GPU ID: " << vgpu_id << ") to compute "
-                      YELLOW_COLOR "VV" RESET_COLOR << std::endl
+            out << PUSHPIN_EMOJI << timername << " will use GPU " << gpu_id
+                << " (Actual GPU ID: " << vgpu_id << ") to compute "
+                YELLOW_COLOR "VV" RESET_COLOR << std::endl
         // Announce expected sizes before possibly running OOM
-                  << INFO_EMOJI << timername << "'s estimated VV memory footprint: "
-                  << (tv_flat_size+partition_size+vv_size+vv_index_size) / static_cast<float>(1024*1024*1024)
-                  << " GiB" << std::endl;
+                << INFO_EMOJI << timername << "'s estimated VV memory footprint: "
+                << (tv_flat_size+partition_size+vv_size+vv_index_size) / static_cast<float>(1024*1024*1024)
+                << " GiB" << std::endl;
         }
         // Allocated separately because we can release it earlier
         CUDA_ASSERT(cudaMalloc((void**)&device_tv, tv_flat_size));
@@ -755,14 +769,14 @@ void * parallel_work(void *parallel_arguments) {
 
         // Compute the relationship
         if (_my_args.debug > DEBUG_MIN) {
-            std::cout << INFO_EMOJI << timername << " Kernel launch configuration is "
-                      << grid_size.x << " grid blocks with " << thread_block_size.x
-                      << " threads per block" << std::endl
-                      << INFO_EMOJI << timername << " The mesh has " << TV_local->nCells
-                      << " cells and " << TV_local->nPoints << " vertices" << std::endl
-                      << INFO_EMOJI << timername << " Tids >= " << TV_local->nCells * nbVertsInCell
-                      << " should auto-exit (" << (thread_block_size.x * grid_size.x) - n_to_compute
-                      << ")" << std::endl;
+            out << INFO_EMOJI << timername << " Kernel launch configuration is "
+                << grid_size.x << " grid blocks with " << thread_block_size.x
+                << " threads per block" << std::endl
+                << INFO_EMOJI << timername << " The mesh has " << TV_local->nCells
+                << " cells and " << TV_local->nPoints << " vertices" << std::endl
+                << INFO_EMOJI << timername << " Tids >= " << TV_local->nCells * nbVertsInCell
+                << " should auto-exit (" << (thread_block_size.x * grid_size.x) - n_to_compute
+                << ")" << std::endl;
         }
         timer.tick_announce();
         char kerneltimername[32];
@@ -823,8 +837,6 @@ void * parallel_work(void *parallel_arguments) {
             // Scalar values from VTK
             for(int j = 0; j < TV_local->nPoints; j++) {
                 scalar_values[j] = TV_local->vertexAttributes[j];
-                //std::cerr << "TV value for point " << j << ": " << TV_local->vertexAttributes[j] << std::endl;
-                //std::cout << "A Scalar value for point " << j << ": " << scalar_values[j] << std::endl;
             }
             // MADE BLOCKING to prevent early free
             CUDA_WARN(cudaMemcpyAsync(device_scalar_values, scalar_values,
@@ -871,9 +883,9 @@ void * parallel_work(void *parallel_arguments) {
                   << FORCED_BLOCK_IDX << ")" << std::endl;
         #endif
         if (_my_args.debug > DEBUG_MIN) {
-            std::cout << timername << " Launch critPoints kernel with " << n_to_compute
-                      << " units of work (" << grid_size.x << " blocks, "
-                      << thread_block_size.x << " threads per block)" << std::endl;
+            out << timername << " Launch critPoints kernel with " << n_to_compute
+                << " units of work (" << grid_size.x << " blocks, "
+                << thread_block_size.x << " threads per block)" << std::endl;
         }
         sprintf(kerneltimername, "Parallel %s kernel %02d", "SFCP", gpu_id);
         Timer sfcpKernel(false, kerneltimername, _my_args.debug == NO_DEBUG);
@@ -923,11 +935,11 @@ void * parallel_work(void *parallel_arguments) {
                 dense_CPCs[dense_basis+2] = host_CPCs[host_basis+2];
                 // DEBUG: Announce values
                 /*
-                std::cout << "Set dense CPCs values for point " << i << " between indices "
-                          << dense_basis << "-" << dense_basis+2 << " (values: "
-                          << dense_CPCs[dense_basis  ] << ", "
-                          << dense_CPCs[dense_basis+1] << ", "
-                          << dense_CPCs[dense_basis+2] << ")" << std::endl;
+                out << "Set dense CPCs values for point " << i << " between indices "
+                    << dense_basis << "-" << dense_basis+2 << " (values: "
+                    << dense_CPCs[dense_basis  ] << ", "
+                    << dense_CPCs[dense_basis+1] << ", "
+                    << dense_CPCs[dense_basis+2] << ")" << std::endl;
                 */
             }
         }
@@ -994,7 +1006,7 @@ int main(int argc, char *argv[]) {
 
     Timer all_critical_points(false, "ALL Critical Points", args.debug == NO_DEBUG);
     // Parallelization
-    int n_parallel = args.n_GPUS;
+    int n_parallel = args.n_GPUS * args.threadNumber;
     if (args.no_partitioning) {
         n_parallel = 1;
     }
