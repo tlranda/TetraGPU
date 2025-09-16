@@ -612,7 +612,7 @@ void * parallel_work(void *parallel_arguments) {
         // Shortcut available when no partitioning used
         if (_my_args.no_partitioning) {
             TV_local = &(*TV);
-            max_VV_local = get_approx_max_VV(*TV_local, TV_local->nPoints);
+            max_VV_local = get_approx_max_VV(*TV_local, TV_local->nPoints, _my_args.debug);
             // Ensure partitioning data is set correctly
             TV_local->n_partitions = 1;
             std::vector<int> local_partitionIDs(TV_local->nPoints, 1);
@@ -675,7 +675,7 @@ void * parallel_work(void *parallel_arguments) {
             TV_local->cells = std::move(cells);
             TV_local->partitionIDs = std::move(partition_IDs);
             TV_local->vertexAttributes = std::move(vertexAttributes);
-            max_VV_local = get_approx_max_VV(*TV_local, n_points);
+            max_VV_local = get_approx_max_VV(*TV_local, n_points, _my_args.debug);
             vtkIdType n_in_partition = 0;
             for (vtkIdType i = 0; i < n_points; i++) {
                 if (TV_local->partitionIDs[i] != 0) {
@@ -808,9 +808,11 @@ void * parallel_work(void *parallel_arguments) {
         sprintf(intervalname, "%s VV kernel duration", timername);
         vvKernel.label_prev_interval(intervalname);
         // DEBUG: Check that every point in VV is properly found
+        /*
         full_check_VV_Host(vv_size, vv_index_size, tv_flat_size, max_VV_local,
                            TV_local->nPoints, TV_local->nCells, vv_computed,
                            vv_index, device_tv, thread_stream);
+        */
         // No longer need TV allocation, free it
         CUDA_WARN(cudaFree(device_tv));
         // NOTE: Asynchronous WRT CPU, we can continue to setup SFCP kernel while VV runs
@@ -849,6 +851,7 @@ void * parallel_work(void *parallel_arguments) {
         }
         timer.tick_announce();
 
+        /*
         // DEBUG: Check VV for threats to correctness / efficiency
         sprintf(intervalname, "%s Check for VV duplicates / error", timername);
         timer.label_next_interval(intervalname);
@@ -859,7 +862,7 @@ void * parallel_work(void *parallel_arguments) {
         check_VV_errors(vv_size,vv_index_size, vv_computed, vv_index, TV_local,
                         max_VV_local, thread_stream);
         timer.tick_announce();
-        // END DEBUG
+        */
 
 
         // Critical Points
@@ -954,7 +957,7 @@ void * parallel_work(void *parallel_arguments) {
         if (device_CPCs != nullptr) CUDA_WARN(cudaFree(device_CPCs));
         if (device_valences != nullptr) CUDA_WARN(cudaFree(device_valences));
         if (device_scalar_values != nullptr) CUDA_WARN(cudaFree(device_scalar_values));
-        if (host_CPCs != nullptr) CUDA_WARN(cudaFreeHost(host_CPCs));
+        if (host_CPCs != nullptr && !_my_args.no_partitioning) CUDA_WARN(cudaFreeHost(host_CPCs));
         timer.tick_announce();
     }
     return (void*)dense_CPCs;
