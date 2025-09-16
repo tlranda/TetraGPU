@@ -26,7 +26,7 @@ __global__ void dummy_kernel(void) {
 #define CONSTRAIN_BLOCK 0
 // Debugging specific block executions
 /*
-#define FORCED_BLOCK_IDX 0
+#define FORCED_BLOCK_IDX 3183
 #define TID_SELECTION (blockDim.x * FORCED_BLOCK_IDX) + threadIdx.x
 #define PRINT_ON 1
 #define CONSTRAIN_BLOCK 1
@@ -58,7 +58,10 @@ __global__ void critPoints(const int * __restrict__ VV,
     // No work for this point's valence or out of partition
     if (VV_index[my_1d] <= 0 || my_2d < 0 || partition[my_1d] == 0) {
         #if PRINT_ON
-        //printf("Block %d Thread %02d exits due to partitioning or OOB data\n", blockIdx.x, threadIdx.x);
+        /*
+        printf("Block %d Thread %02d exits due to partitioning or OOB data\n",
+               blockIdx.x, threadIdx.x);
+        */
         #endif
         return;
     }
@@ -66,17 +69,21 @@ __global__ void critPoints(const int * __restrict__ VV,
     for (int i = my_1d * max_VV_guess; i < tid; i++) {
         if (VV[i] == my_2d) {
             #if PRINT_ON
-            //printf("Block %d Thread %02d exits from prefix scan\n", blockIdx.x, threadIdx.x);
+            /*
+            printf("Block %d Thread %02d exits from prefix scan\n",
+                   blockIdx.x, threadIdx.x);
+            */
             #endif
             return;
         }
     }
-    #if PRINT_ON
-    // Not every thread in the warp seems to print this out, but every thread (and warp in this block!) should have the same value
-    printf("Block %d Thread %02d remains to participate in computation (VV_index=%d)\n", blockIdx.x, threadIdx.x, VV_index[my_1d]);
-    #endif
 
     // BEYOND THIS POINT, YOU ARE AN ACTUAL WORKER THREAD ON THE PROBLEM
+    #if PRINT_ON
+    // Not every thread needs to print this out, but every thread should have the same value
+    printf("Block %d Thread %02d remains to participate in computation (VV_index=%d)\n",
+           blockIdx.x, threadIdx.x, VV_index[my_1d]);
+    #endif
 
     /*
         2) Read the scalar value used for point classification and classify
@@ -84,7 +91,7 @@ __global__ void critPoints(const int * __restrict__ VV,
            lower neighbor
     */
     // Classify yourself as an upper or lower valence neighbor to your 1d point
-    // Upper = -1, Lower = 1
+    // my_2d is {Upper = -1, Lower = 1} relative to my_1d
     // For parity with Paraview, a tie needs to be broken by lower vertex ID being "lower" than the other one
     const int my_class = 1 - (
                           (scalar_values[my_2d] == scalar_values[my_1d] ?
@@ -97,7 +104,9 @@ __global__ void critPoints(const int * __restrict__ VV,
     neighborhood[threadIdx.x] = my_2d; // Initialize neighborhood with YOURSELF
     __syncthreads();
     #if PRINT_ON
-    printf("Block %d Thread %02d B init on my_1d %d and my_2d %d with valence %d based on %lf (block) vs %lf (thread)\n", blockIdx.x, threadIdx.x, my_1d, my_2d, my_class, scalar_values[my_1d], scalar_values[my_2d]);
+    printf("Block %d Thread %02d B init on my_1d %d and my_2d %d with valence %d based on %lf (block) vs %lf (thread)\n",
+           blockIdx.x, threadIdx.x, my_1d, my_2d, my_class,
+           scalar_values[my_1d], scalar_values[my_2d]);
     #endif
     /*
         3) For all other threads sharing your neighborhood classification, scan
@@ -107,9 +116,15 @@ __global__ void critPoints(const int * __restrict__ VV,
            location in memory, you log +1 component of your type.
     */
     bool upper_converge = false, lower_converge = false;
-    // Repeat until both component directions converge
+    /*
+       Repeat Union-Find until both component directions converge
+
+       Technically to_converge should NEVER be a termination condition, but
+       it is probably not going to cost much in terms of overhead for the kernel
+       and guarantees loop termination (eventually) on bad inputs / buggy versions
+    */
     int to_converge = 0;
-    while (!(upper_converge && lower_converge && to_converge < max_VV_guess) /* DEBUG => */) {
+    while (!(upper_converge && lower_converge && to_converge < max_VV_guess)) {
         // Sanity: Guarantee zero-init
         if (threadIdx.x == 0) {
             #if PRINT_ON
@@ -141,7 +156,7 @@ __global__ void critPoints(const int * __restrict__ VV,
             // Found same valence
             const int candidate_component_2d = VV[i];
             if (i != tid && valences[i] == my_class) {
-                // Find yourself in their adjacency to become a shared component and release burden
+                // Find yourself in their adjacency to become a shared component and release shmem write burden
                 const int start_2d = candidate_component_2d*max_VV_guess,
                           stop_2d  = start_2d + VV_index[candidate_component_2d];
                 for(int j = start_2d; j < stop_2d; j++) {
@@ -152,11 +167,14 @@ __global__ void critPoints(const int * __restrict__ VV,
                     if (VV[j] == my_2d && neighborhood[threadIdx.x] > theirNeighborhood) {
                         neighborhood[threadIdx.x] = theirNeighborhood;
                         atomicAdd(component_edits+((my_class+1)/2), 1);
+                        #ifdef PRINT_ON
                         /*
                         printf("Block %d Thread %02d Inspect %02d Shares component at VV[%d][%d] (%s)\n",
-                                blockIdx.x, threadIdx.x, inspect_step, candidate_component_2d, j-(candidate_component_2d*max_VV_guess),
+                                blockIdx.x, threadIdx.x, inspect_step, candidate_component_2d,
+                                j-(candidate_component_2d*max_VV_guess),
                                 my_class == -1 ? "Upper" : "Lower");
                         */
+                        #endif
                     }
                 }
             }
@@ -165,16 +183,19 @@ __global__ void critPoints(const int * __restrict__ VV,
         upper_converge = *upper_edits == 0;
         lower_converge = *lower_edits == 0;
     }
-    // End Union-Find
+    // End all Union-Finds
 
     if (neighborhood[threadIdx.x] == my_2d) { // You are the root of a component!
         const int memoffset = ((my_1d*3)+((my_class+1)/2));
         const unsigned int old = atomicAdd(classes+memoffset,1);
         #if PRINT_ON
-        printf("Block %d Thread %02d Writes %s component @ mem offset %d (old: %u)\n", blockIdx.x, threadIdx.x, my_class == -1 ? "Upper" : "Lower", memoffset, old);
+        printf("Block %d Thread %02d Writes %s component @ mem offset %d (old: %u)\n",
+               blockIdx.x, threadIdx.x,
+               (my_class == -1 ? "Upper" : "Lower"), memoffset, old);
         #endif
     }
     __syncthreads();
+
     /*
         4) Classification is performed as follows: Exactly 1 upper component is
            a maximum; exactly 1 lower component is a minimum; two or more upper
@@ -189,35 +210,43 @@ __global__ void critPoints(const int * __restrict__ VV,
         if (to_converge > max_VV_guess / 2) {
             printf("Block %02d took %d loops to converge\n", blockIdx.x, to_converge);
         }
-        printf("Block %d Thread %02d Verdict: my_1d (%d) has %u upper and %u lower\n", blockIdx.x, threadIdx.x, my_1d, upper, lower);
+        printf("Block %d Thread %02d Verdict: my_1d (%d) has %u upper and %u lower\n",
+               blockIdx.x, threadIdx.x, my_1d, upper, lower);
         #endif
+
+        // Set classification
         if (upper >= 1 && lower == 0) {
             #if PRINT_ON
-            printf("Block %d Thread %02d set classification as %s\n", blockIdx.x, threadIdx.x, "MINIMUM");
+            printf("Block %d Thread %02d set classification as %s\n", blockIdx.x,
+                   threadIdx.x, "MINIMUM");
             #endif
             classes[my_classes+2] = MINIMUM_CLASS;
         }
         else if (upper == 0 && lower >= 1) {
             #if PRINT_ON
-            printf("Block %d Thread %02d set classification as %s\n", blockIdx.x, threadIdx.x, "MAXIMUM");
+            printf("Block %d Thread %02d set classification as %s\n", blockIdx.x,
+                   threadIdx.x, "MAXIMUM");
             #endif
             classes[my_classes+2] = MAXIMUM_CLASS;
         }
         else if (upper == 1 && lower == 1) {
             #if PRINT_ON
-            printf("Block %d Thread %02d set classification as %s\n", blockIdx.x, threadIdx.x, "REGULAR");
+            printf("Block %d Thread %02d set classification as %s\n", blockIdx.x,
+                   threadIdx.x, "REGULAR");
             #endif
             classes[my_classes+2] = REGULAR_CLASS;
         }
         else {
             #if PRINT_ON
-            printf("Block %d Thread %02d set classification as %s\n", blockIdx.x, threadIdx.x, "SADDLE");
+            printf("Block %d Thread %02d set classification as %s\n", blockIdx.x,
+                   threadIdx.x, "SADDLE");
             #endif
             classes[my_classes+2] = SADDLE_CLASS;
         }
     }
     #if PRINT_ON
-    printf("Block %d Thread %02d exits normally at end of computation\n", blockIdx.x, threadIdx.x);
+    printf("Block %d Thread %02d exits normally at end of computation\n",
+           blockIdx.x, threadIdx.x);
     #endif
 }
 
@@ -225,7 +254,7 @@ void export_classes(unsigned int * classes,
                     TV_Data & TV,
                     runtime_arguments & args) {
     vtkIdType n_classes = TV.nPoints;
-    // VOIDS can be ignored during aggregation, should all be eliminated after all GPU kernels have returned!
+    // VOIDS can be ignored during aggregation, but should not exist after all GPU kernels have returned!
     std::ofstream output_fstream; // Used for file handle to indicated name
     std::streambuf * output_buffer; // Buffer may point to stdout or file handle
     if (args.export_ == "") {
@@ -265,28 +294,34 @@ void export_classes(unsigned int * classes,
             (n_upper == 1 && n_lower == 1 && my_class != REGULAR_CLASS) ||
             ((n_upper > 1 && n_lower > 1) && my_class != SADDLE_CLASS)) {
             /*
-            out << "INSANITY DETECTED (" << n_upper << ", " << n_lower << ", " << my_class << ") FOR POINT " << i << " (Given class "
-                << (my_class == 1 ? "Maximum" : (my_class == 2 ? "Minimum" : (my_class == 3 ? "Regular" : "Saddle")))
+            out << "INSANITY DETECTED (" << n_upper << ", " << n_lower << ", "
+                << my_class << ") FOR POINT " << i << " (Given class "
+                << (my_class == 1 ? "Maximum" :
+                    (my_class == 2 ? "Minimum" :
+                     (my_class == 3 ? "Regular" :
+                      (my_class == 4 ? "Saddle" :
+                       (my_class == 0 ? "VOID" : "Non-mapped value")))))
                 << ")" << std::endl;
             */
             n_insane[partition_id]++;
         }
-        /*
+        // Output formats
         out << "A Class " << i << " = " << my_class << std::endl;
+        /*
         out << "A Class " << i << " = " << class_names[my_class] << "(Upper: "
             << n_upper << ", Lower: " << n_lower << ")" << std::endl;
         */
         if (my_class == MAXIMUM_CLASS) {
             n_max[partition_id]++;
-            out << "Point " << i << " in partition " << partition_id << " is a MAXIMUM" << std::endl;
+            //out << "Point " << i << " in partition " << partition_id << " is a MAXIMUM" << std::endl;
         }
         else if (my_class == MINIMUM_CLASS) {
             n_min[partition_id]++;
-            out << "Point " << i << " in partition " << partition_id << " is a MINIMUM" << std::endl;
+            //out << "Point " << i << " in partition " << partition_id << " is a MINIMUM" << std::endl;
         }
         else if (my_class == SADDLE_CLASS) {
             n_saddle[partition_id]++;
-            out << "Point " << i << " in partition " << partition_id << " is a SADDLE" << std::endl;
+            //out << "Point " << i << " in partition " << partition_id << " is a SADDLE" << std::endl;
         }
         else if (my_class == REGULAR_CLASS) {
             n_regular[partition_id]++;
@@ -312,7 +347,7 @@ void export_classes(unsigned int * classes,
         << "Total number of saddles: " << std::accumulate(n_saddle.begin(), n_saddle.end(), 0) << std::endl
         << "Total number of regular: " << std::accumulate(n_regular.begin(), n_regular.end(), 0) << std::endl
         << "Total number of voids:   " << std::accumulate(n_void.begin(), n_void.end(), 0) << std::endl;
-    /* DEBUG: OUTPUT BY PARTITION */
+    /* DEBUG: OUTPUT BY PARTITION
     for (int i = 0; i < TV.n_partitions; i++) {
         out << "Partition " << i << " number of minima:  " << n_min[i] << std::endl
             << "Partition " << i << " number of maxima:  " << n_max[i] << std::endl
@@ -320,6 +355,7 @@ void export_classes(unsigned int * classes,
             << "Partition " << i << " number of regular: " << n_regular[i] << std::endl
             << "Partition " << i << " number of voids:   " << n_void[i] << std::endl;
     }
+    */
 }
 
 void full_check_VV_Host(const size_t vv_size, const size_t vv_index_size, const size_t tv_size,
@@ -369,6 +405,7 @@ void full_check_VV_Host(const size_t vv_size, const size_t vv_index_size, const 
         }
     }
     std::cout << OK_EMOJI << "All VV entries found for TV" << std::endl;
+
     // Test outside of boundaries
     for (vtkIdType i = 0; i < points; i++) {
         unsigned int base_index = i * max_VV_local,
@@ -532,7 +569,7 @@ void * parallel_work(void *parallel_arguments) {
     }
     /*
     unsigned int approved_partition_ids[] =
-                    {0,}; // SAFE IDS -- formerly also included: {0,2,3,5,8,12}
+                    {9,}; // SAFE IDS -- formerly also included: {0,2,3,5,8,12}
                     //{1,4,6,7,9,10,11,13,14}; // UNSAFE IDS
     */
     for (; my_partition_id < TV->n_partitions; my_partition_id += n_parallel)
@@ -544,8 +581,8 @@ void * parallel_work(void *parallel_arguments) {
         timer.tick();
         TV_Data * TV_local;
         int max_VV_local;
-        std::map<vtkIdType,vtkIdType> partition_remapping;
-        std::vector<vtkIdType> inverse_partition_mapping;
+        std::set<vtkIdType> included_points;
+        std::vector<vtkIdType> included_cells, inverse_partition_mapping;
         // Shortcut available when no partitioning used
         if (_my_args.no_partitioning) {
             TV_local = &(*TV);
@@ -557,13 +594,11 @@ void * parallel_work(void *parallel_arguments) {
         }
         else {
             // Determine the number of points and cells
-            vtkIdType n_points = 0, n_cells = 0, local_vertex = 0;
+            vtkIdType nth_tetra = 0, n_points = 0, n_cells = 0;
             std::vector<std::array<vtkIdType, nbVertsInCell>> cells;
             std::vector<unsigned int> partition_IDs;
             std::vector<double> vertexAttributes;
             // First order inclusion: All points of any tetra with one or more vertices included in partition
-            // DEBUG: Count the tetra # for output purposes
-            vtkIdType nth_tetra = 0;
             for (const auto & VertList : (*TV)) {
                 bool included = false;
                 for (const vtkIdType vertex : VertList) {
@@ -574,36 +609,32 @@ void * parallel_work(void *parallel_arguments) {
                     }
                 }
                 if (included) {
+                    included_cells.emplace_back(nth_tetra);
                     for (const vtkIdType vertex : VertList) {
-                        // ALL points in this tetra get re-indexed
-                        auto result = partition_remapping.insert(
-                                {vertex, local_vertex}
-                                );
-                        if (result.second) {
-                            // Add to inverse map as well
-                            inverse_partition_mapping.emplace_back(vertex);
-                            // Increment next point
-                            local_vertex++;
-                        }
+                        included_points.insert(vertex);
                     }
-                    /*
-                    std::cerr << INFO_EMOJI << timername << " includes tetra # " << nth_tetra
-                        << " with vertex IDs (global:local) {(" << VertList[0]
-                        << ":" << partition_remapping.at(VertList[0]) << "), ("
-                        << VertList[1] << ":" << partition_remapping.at(VertList[1])
-                        << "), (" << VertList[2] << ":" << partition_remapping.at(VertList[2])
-                        << "), (" << VertList[3] << ":" << partition_remapping.at(VertList[3])
-                        << ")}" << std::endl;
-                    */
-                    // Write the tetra down using remapped indices
-                    cells.emplace_back(std::array<vtkIdType,nbVertsInCell>{
-                            partition_remapping.at(VertList[0]),
-                            partition_remapping.at(VertList[1]),
-                            partition_remapping.at(VertList[2]),
-                            partition_remapping.at(VertList[3])
-                            });
                 }
                 nth_tetra++;
+            }
+            // Now all included points and cells are known -- make stable remapping
+            std::map<vtkIdType, vtkIdType> partition_remapping;
+            std::vector<vtkIdType> stable_vertices(included_points.begin(), included_points.end());
+            std::sort(stable_vertices.begin(), stable_vertices.end());
+            vtkIdType nth_point = 0;
+            for (const vtkIdType point : stable_vertices) {
+                partition_remapping.insert({point, nth_point});
+                nth_point++;
+            }
+            // This is correct, save an operation or two
+            inverse_partition_mapping = std::move(stable_vertices);
+            // Write the cells using localized indices
+            for (vtkIdType tetra_id : included_cells) {
+                cells.emplace_back(std::array<vtkIdType,nbVertsInCell>{
+                        partition_remapping.at(TV->cells[tetra_id][0]),
+                        partition_remapping.at(TV->cells[tetra_id][1]),
+                        partition_remapping.at(TV->cells[tetra_id][2]),
+                        partition_remapping.at(TV->cells[tetra_id][3]),
+                        });
             }
             // Now fetch data for partition inclusion and scalars using inv map
             for (vtkIdType vertex : inverse_partition_mapping) {
@@ -611,7 +642,7 @@ void * parallel_work(void *parallel_arguments) {
                 partition_IDs.emplace_back(TV->partitionIDs[vertex] == my_partition_id);
                 vertexAttributes.emplace_back(TV->vertexAttributes[vertex]);
             }
-            n_points = partition_remapping.size();
+            n_points = included_points.size();
             n_cells = cells.size();
 
             // Set TV_local using localized data
@@ -716,11 +747,18 @@ void * parallel_work(void *parallel_arguments) {
         char kerneltimername[32];
         sprintf(kerneltimername, "Parallel %s kernel %02d", "VV", gpu_id);
         Timer vvKernel(false, kerneltimername);
-        // DEBUG: Super serialized VV kernel
         /*
+        // DEBUG: Super serialized VV kernel
         for (int i = 0; i < TV_local->nCells; i++) {
+            if (i == 124) {
+                std::cout << "Here ya go" << std::endl;
+            }
             KERNEL_WARN(VV_kernel<<<1 KERNEL_LAUNCH_SEPARATOR 4>>>(
                         &device_tv[i*4], 1, 4, max_VV_local, vv_index, vv_computed));
+            CUDA_WARN(cudaDeviceSynchronize());
+            if (i == 124) {
+                std::cout << "Post-kernel is here" << std::endl;
+            }
         }
         */
         KERNEL_WARN(VV_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
