@@ -1057,7 +1057,7 @@ __global__ void VV_kernel(const int * __restrict__ tv,
     }
 }
 
-int get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points) {
+int get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points, const int debug=NO_DEBUG) {
     // This calculation does NOT need to be exact, it needs to upper-bound
     // our memory usage. In order to do so, we count the largest number of
     // times a vertex appears in cells. In the WORST case scenario, this
@@ -1077,7 +1077,9 @@ int get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points) {
     // Minimum warp width for help with consistency
     // TODO: Possibly round this UP to a multiple of 32 for threadblock alignment nice-ness
     max = ((max+31)/32)*32;
-    std::cerr << INFO_EMOJI << "Approximated max " YELLOW_COLOR "VV" RESET_COLOR " adjacency: " << max << std::endl;
+    if (debug > NO_DEBUG)
+        std::cerr << INFO_EMOJI << "Approximated max " YELLOW_COLOR "VV"
+                     RESET_COLOR " adjacency: " << max << std::endl;
     return max;
 }
 

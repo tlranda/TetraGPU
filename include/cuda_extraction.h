@@ -114,7 +114,7 @@ std::unique_ptr<FE_Data> make_FE_GPU(const VF_Data & VF,
                                      const bool free_transients);
 // No kernel yet -- To be implemented
 // VV = TV' x TV
-int get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points);
+int get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points, const int debug);
 device_VV * make_VV_GPU_return(const TV_Data & TV,
                                const int n_cells,
                                const int n_points,

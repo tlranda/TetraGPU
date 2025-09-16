@@ -1007,7 +1007,7 @@ int main(int argc, char *argv[]) {
     std::cout << std::endl << std::endl;
 
 
-    Timer all_critical_points(false, "ALL Critical Points", args.debug == NO_DEBUG);
+    Timer all_critical_points(false, "ALL Critical Points");
     // Parallelization
     int n_parallel = args.n_GPUS * args.threadNumber;
     if (args.no_partitioning) {
