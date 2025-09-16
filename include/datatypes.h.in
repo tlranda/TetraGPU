@@ -62,7 +62,7 @@ struct TV_Data {
     std::vector<std::array<vtkIdType,nbVertsInCell>> cells;
     // These vectors are std::move()'d to, rather than being initialized
     std::vector<double> vertexAttributes;
-    std::vector<unsigned int> partitionIDs;
+    std::vector<int> partitionIDs;
     int n_partitions;
 
     TV_Data(vtkIdType _points, vtkIdType _cells) {

@@ -356,6 +356,7 @@ bool check_host_vs_device_FV(FV_Data & host_FV,
     return n_failures == 0;
 }
 
+/*
 bool check_host_vs_device_ET(const ET_Data & host_ET, const ET_Data & device_ET) {
     std::cerr << EXCLAIM_EMOJI << "Not implemented yet" << std::endl;
     return false;
@@ -376,6 +377,8 @@ bool check_host_vs_device_VT(const VT_Data & host_VT, const VT_Data & device_VT)
     std::cerr << EXCLAIM_EMOJI << "Not implemented yet" << std::endl;
     return false;
 }
+*/
+
 bool check_host_vs_device_TT(const TT_Data & host_TT, const TT_Data & device_TT) {
     if (host_TT.size() != device_TT.size()) {
         std::cerr << EXCLAIM_EMOJI << "Device TT size (" << device_TT.size()

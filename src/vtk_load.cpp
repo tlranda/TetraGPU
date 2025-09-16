@@ -159,7 +159,7 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
     // Retrieve partitioning IDs
     if (args.partitioningname == "") {
         // Default everything into a single partition
-        std::vector<unsigned int> partitionIDs(nPoints,0);
+        std::vector<int> partitionIDs(nPoints,0);
         data->partitionIDs = std::move(partitionIDs);
     }
     else {
@@ -177,10 +177,10 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
             exit(EXIT_FAILURE);
         }
         vtkDataArray* partitionAttribute = pd->GetArray(use_this_array);
-        std::vector<unsigned int> partitionIDs(nPoints);
+        std::vector<int> partitionIDs(nPoints);
         for (vtkIdType i = 0; i < nPoints; i++) partitionIDs[i] = partitionAttribute->GetTuple1(i);
         // Determine the number of partitions
-        std::set<unsigned int> partition_set(partitionIDs.begin(), partitionIDs.end());
+        std::set<int> partition_set(partitionIDs.begin(), partitionIDs.end());
         data->n_partitions = partition_set.size();
         std::cout << "Using " << data->n_partitions << " partitions from " << args.partitioningname << std::endl;
         data->partitionIDs = std::move(partitionIDs);

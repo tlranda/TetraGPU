@@ -100,7 +100,7 @@ cd ..;
 
 if [[ "${debug}" == "0" ]]; then
     for arg in $@; do
-        task="time ./${build_dir}/${exe} --input $arg -t 24 ${RUNTIME_ARGS} ";
+        task="time ./${build_dir}/${exe} --input $arg ${RUNTIME_ARGS} ";
         echo "${task}";
         eval "${task}";
     done;

@@ -95,7 +95,7 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
     const option_map help_info = {
         {"help", "Print this help message and exit"},
         {"input", "Tetrahedral mesh input (.vtu only)"},
-        {"threads", "CPU thread limit for parallelism"},
+        {"threads", "CPU threads per GPU"},
         {"export", "File to export CritPoints classifications to"},
         {"arrayname", "Array to use for scalar data (as string name)"},
         {"partitioningname", "Array to use for multi-GPU partitioning (as string name)"},
@@ -138,12 +138,17 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
             case 0:
                 // I need to remind myself of the actual significance of this case
                 break;
+            case '?':
+                errors << WARN_EMOJI << "Unrecognized argument: "
+                       << argv[optind-1] << std::endl;
+                bad_args += 1;
+                break;
             case 'i':
                 args.fileName = std::string(optarg);
                 break;
             case 't':
                 args.threadNumber = atoi(optarg);
-                if (args.threadNumber == 0) {
+                if (args.threadNumber <= 0) {
                     // Indicates 0 or an error in processing, fortunately
                     // 0 is an invalid value for us as well in this context.
                     std::cerr << "Thread argument must be integer >= 1" <<
@@ -153,11 +158,6 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
                 break;
             case 'e':
                 args.export_ = std::string(optarg);
-                break;
-            case '?':
-                errors << WARN_EMOJI << "Unrecognized argument: "
-                       << argv[optind-1] << std::endl;
-                bad_args += 1;
                 break;
             case 'a':
                 args.arrayname = std::string(optarg);
@@ -178,6 +178,10 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
                 break;
             case 'g':
                 args.n_GPUS = atoi(optarg);
+                if (args.n_GPUS < 0) {
+                    std::cerr << "GPU count must be non-negative" << std::endl;
+                    bad_args += 1;
+                }
                 break;
             case 'n':
                 args.no_partitioning = true;
@@ -200,6 +204,13 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
         args.n_GPUS = 1;
         // Ensure no partitioning is utilized
         args.partitioningname = "";
+    }
+    else if (args.partitioningname == "") {
+        // Have to know a name to apply partitioning
+        std::cerr << WARN_EMOJI << "No partitioning name given, treating as --no_partitioning"
+                  << std::endl;
+        args.no_partitioning = true;
+        args.n_GPUS = 1;
     }
     if (args.n_GPUS == 0) {
         // Ensure at least one GPU exists, else error
@@ -252,7 +263,7 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
     else {
         std::cout << INFO_EMOJI << "Dataset: " << args.fileName << std::endl;
     }
-    std::cout << INFO_EMOJI << "CPU threads: " << args.threadNumber
+    std::cout << INFO_EMOJI << "CPU threads per GPU: " << args.threadNumber
               << std::endl
               << INFO_EMOJI << "Export: " << (args.export_ == "" ?
                                               "[n/a]" :

@@ -281,7 +281,7 @@ void export_classes(unsigned int * classes,
                            n_void(TV.n_partitions,0);
     for (vtkIdType i = 0; i < n_classes; i++)
     {
-        const unsigned int partition_id = args.no_partitioning ? 0 : TV.partitionIDs[i];
+        const int partition_id = args.no_partitioning ? 0 : TV.partitionIDs[i];
         // The classification information is provided, then the class:
         // {# upper, # lower, class}
         // CLASSES = {'minimum': 1, 'maximum': 2, 'regular': 3, 'saddle': 4}
@@ -601,14 +601,14 @@ void * parallel_work(void *parallel_arguments) {
             max_VV_local = get_approx_max_VV(*TV_local, TV_local->nPoints);
             // Ensure partitioning data is set correctly
             TV_local->n_partitions = 1;
-            std::vector<unsigned int> local_partitionIDs(TV_local->nPoints, 1);
+            std::vector<int> local_partitionIDs(TV_local->nPoints, 1);
             TV_local->partitionIDs = std::move(local_partitionIDs);
         }
         else {
             // Determine the number of points and cells
             vtkIdType nth_tetra = 0, n_points = 0, n_cells = 0;
             std::vector<std::array<vtkIdType, nbVertsInCell>> cells;
-            std::vector<unsigned int> partition_IDs;
+            std::vector<int> partition_IDs;
             std::vector<double> vertexAttributes;
             // First order inclusion: All points of any tetra with one or more vertices included in partition
             for (const auto & VertList : (*TV)) {

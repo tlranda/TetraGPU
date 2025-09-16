@@ -951,6 +951,7 @@ std::unique_ptr<FE_Data> make_FE_GPU(const VF_Data & VF,
     return faceToEdges;
 }
 
+/*
 std::unique_ptr<ET_Data> make_ET_GPU(const TV_Data & TV,
                                      const VE_Data & VE,
                                      const vtkIdType n_points,
@@ -962,6 +963,7 @@ std::unique_ptr<ET_Data> make_ET_GPU(const TV_Data & TV,
     std::cerr << WARN_EMOJI << "Not implemented yet!" << std::endl;
     return edgeToCell;
 }
+*/
 
 __global__ void VV_kernel(const int * __restrict__ tv,
                           const int n_cells,
