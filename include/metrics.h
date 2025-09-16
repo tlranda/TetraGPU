@@ -35,10 +35,11 @@ class Timer {
         // Convenient way to track INTERVALS rather than vector entries,
         // automatically controlled by tick()
         int open_interval = 0;
+        bool quiet = false;
     public:
         // Creation / Destruction / Copy
+        Timer(bool deferred, std::string name="", bool quiet_=false);
         Timer(void);
-        Timer(bool deferred, std::string name);
         ~Timer(void);
 
         // Rename timer
@@ -57,6 +58,9 @@ class Timer {
         void interval(int idx = -1);
         void interval(std::string label);
         void all_intervals(int idx = 0);
+
+        // "Volume" controls
+        void toggle_quiet(void);
 };
 
 #endif

@@ -36,6 +36,11 @@ const int nbEdgesInCell = 6;
 const int nbEdgesInFace = 3;
 const int nbFacesInCell = 4;
 
+// Enum of debug levels
+#define DEBUG_MAX 2
+#define DEBUG_MIN 1
+#define NO_DEBUG  0
+
 struct EdgeData {
     vtkIdType highVert = 0, // edge's higher vertex id
               id = 0;       // edge's id
@@ -140,7 +145,7 @@ typedef std::vector<std::vector<vtkIdType>> TT_Data;
 // Argument values to be stored here, with defaults if they are optional
 typedef struct argstruct {
     std::string fileName = "tiny.vtu";
-    int threadNumber = 1, max_VV = -1, n_GPUS = 0;
+    int threadNumber = 1, max_VV = -1, n_GPUS = 0, debug = DEBUG_MAX;
     std::string export_ = "",
                 arrayname = "",
                 partitioningname = "";
@@ -186,12 +191,13 @@ typedef struct argstruct {
         fileName = other.fileName;
         threadNumber = other.threadNumber;
         max_VV = other.max_VV;
+        n_GPUS = other.n_GPUS;
+        debug = other.debug;
         export_ = other.export_;
         arrayname = other.arrayname;
         partitioningname = other.partitioningname;
-        arg_flags = other.arg_flags;
-        n_GPUS = other.n_GPUS;
         no_partitioning = other.no_partitioning;
+        arg_flags = other.arg_flags;
     }
 } runtime_arguments;
 typedef std::map<const char*, std::string> option_map;

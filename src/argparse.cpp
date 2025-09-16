@@ -61,7 +61,7 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
     // Disable getopt's automatic error messages so we can catch it via '?'
     opterr = 0;
     // Getopt option declarations
-    const char * optionstring = "hi:t:e:a:p:v:g:n"
+    const char * optionstring = "hi:t:e:a:p:v:g:d:n"
         // Semicolon is newline separated to permit #ifdef guards for portions of the option string
     ;
     static struct option long_options[] = {
@@ -73,6 +73,7 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
         {"partitioningname", required_argument, 0, 'p'},
         {"max_VV", required_argument, 0, 'v'},
         {"gpus", required_argument, 0, 'g'},
+        {"debug", required_argument, 0, 'd'},
         {"no_partitioning", no_argument, 0, 'n'},
         #ifdef VALIDATE_GPU
         {"validate", no_argument, &arg_flags[0], 1},
@@ -101,6 +102,7 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
         {"partitioningname", "Array to use for multi-GPU partitioning (as string name)"},
         {"max_VV", "Override estimation of max VV with integer value"},
         {"gpus", "Set number of GPUs to use (larger than detected is warning, but will emulate behavior)"},
+        {"debug", "Set the debug level (0=OFF, 1=Reduced, 2=Verbose)"},
         {"no_partitioning", "Disable partitioning; requires all memory to fit within single GPU"},
         #ifdef VALIDATE_GPU
         {"validate", "Check GPU results using CPU"},
@@ -125,7 +127,8 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
         {"arrayname", "my_scalar_data_name"},
         {"partitioningname", "my_partition_data_name"},
         {"max_VV", "(INT>0, preferably multiple of 32)"},
-        {"gpus", "(INT>=0)"}
+        {"gpus", "(INT>=0)"},
+        {"debug", "{0,1,2}"},
     };
     std::stringstream errors;
 
@@ -180,6 +183,16 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
                 args.n_GPUS = atoi(optarg);
                 if (args.n_GPUS < 0) {
                     std::cerr << "GPU count must be non-negative" << std::endl;
+                    bad_args += 1;
+                }
+                break;
+            case 'd':
+                args.debug = atoi(optarg);
+                if (args.debug != NO_DEBUG && args.debug != DEBUG_MIN && args.debug != DEBUG_MAX) {
+                    std::cerr << "Invalid debug level specified. Must be within:"
+                              << std::endl << "\t0 - No debug" << std::endl
+                              << "\t1 - Reduced debug" << std::endl
+                              << "\t2 - Verbose debug" << std::endl;
                     bad_args += 1;
                 }
                 break;
@@ -254,6 +267,10 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
         args.n_GPUS = 1;
     }
     // Display parsed values
+    std::cout << INFO_EMOJI << "Debug level: "
+              << (args.debug == NO_DEBUG ? "None" :
+                  (args.debug == DEBUG_MIN ? "Reduced debug" : "Verbose debug"))
+              << std::endl;
     if (args.fileName.empty()) {
         errors << EXCLAIM_EMOJI
                << "Must supply an input filename via -i | --input"

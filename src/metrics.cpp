@@ -27,9 +27,10 @@
 
 // Constructors
 Timer::Timer(void) { this->tick(); }
-Timer::Timer(bool deferred, std::string name="") {
+Timer::Timer(bool deferred, std::string name, bool quiet_) {
     if (!deferred) this->tick();
     this->timer_name = name;
+    this->quiet = quiet_;
 }
 // Destructor
 Timer::~Timer(void) {
@@ -98,17 +99,18 @@ void Timer::interval(int idx) {
     auto elapsed_subsec = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
     elapsed_subsec = elapsed_subsec % 1'000'000;
 
-    std::cout << HOURGLASS_EMOJI;
-    if (label == this->labels.end())
-        std::cout << "Timer[" << this->timer_name << "] "
-                  << "Elapsed time for interval " << idx << "(" << (idx<<1)
-                  << ", " << (idx<<1|1) << ")" << ": ";
-    else std::cout << label->second << ": ";
-    std::cout << elapsed_sec << "." << std::setfill('0') << std::setw(6)
-              << elapsed_subsec << std::endl;
-
-    // Update last printed
-    this->last_printed = idx;
+    if (!this->quiet) {
+        std::cout << HOURGLASS_EMOJI;
+        if (label == this->labels.end())
+            std::cout << "Timer[" << this->timer_name << "] "
+                      << "Elapsed time for interval " << idx << "(" << (idx<<1)
+                      << ", " << (idx<<1|1) << ")" << ": ";
+        else std::cout << label->second << ": ";
+        std::cout << elapsed_sec << "." << std::setfill('0') << std::setw(6)
+                  << elapsed_subsec << std::endl;
+        // Update last printed
+        this->last_printed = idx;
+    }
 }
 
 void Timer::interval(std::string label) {
@@ -130,3 +132,6 @@ void Timer::all_intervals(int idx) {
     }
 }
 
+void Timer::toggle_quiet(void) {
+    this->quiet = !this->quiet;
+}
