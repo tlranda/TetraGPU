@@ -30,7 +30,7 @@ echo "main='${main}'";
 compile_only="${COMPILE_ONLY-0}";
 echo "compile_only='${compile_only}'";
 
-if [ $# -eq 0 ]; then
+if [[ $# -eq 0 && "${RUNTIME_ARGS}" == "" ]]; then
     set -- "${@:1}" "Bucket.vtu";
 fi
 
@@ -89,7 +89,7 @@ if [ $? -ne 0 ]; then
 fi
 
 cd ${build_dir} && make VERBOSE=1;
-if [ $? -ne 0 ]; then
+if [[ $? -ne 0 && "${RUNTIME_ARGS}" == "" ]]; then
     echo "Make return $?";
     exit $?;
 fi
@@ -99,11 +99,17 @@ fi
 cd ..;
 
 if [[ "${debug}" == "0" ]]; then
-    for arg in $@; do
-        task="time ./${build_dir}/${exe} --input $arg ${RUNTIME_ARGS} ";
+    if [[ $# -eq 0 ]]; then
+        task="time ./${build_dir}/${exe} ${RUNTIME_ARGS} ";
         echo "${task}";
         eval "${task}";
-    done;
+    else
+        for arg in $@; do
+            task="time ./${build_dir}/${exe} --input $arg ${RUNTIME_ARGS} ";
+            echo "${task}";
+            eval "${task}";
+        done;
+    fi;
 else
     echo "Suggested run command:";
     echo "--input $1 ${RUNTIME_ARGS}";

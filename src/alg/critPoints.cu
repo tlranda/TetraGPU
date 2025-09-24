@@ -584,8 +584,24 @@ void * parallel_work(void *parallel_arguments) {
     cudaStream_t thread_stream;
     CUDA_WARN(cudaStreamCreate(&thread_stream));
 
+    // Memory controls within per-partition loop
+    vtkIdType max_allocated_points = 0,
+              max_allocated_cells = 0,
+              max_allocated_VV = 0,
+              max_allocated_SFCP_VV = 0,
+              max_allocated_SFCP_points = 0;
+    int * host_flat_tv = nullptr,
+        * device_tv = nullptr,
+        * partition = nullptr,
+        * vv_computed = nullptr,
+        * device_valences = nullptr;
+    unsigned int * vv_index = nullptr,
+                 * host_CPCs = nullptr,
+                 * device_CPCs = nullptr;
+    double * device_scalar_values = nullptr;
+
     // Returnable memory has to be in dense format!
-    unsigned int * dense_CPCs;
+    unsigned int * dense_CPCs; // THIS ONE IS RETURNABLE!!
     size_t dense_cpc_size = (3*TV->nPoints)*sizeof(unsigned int);
     CUDA_ASSERT(cudaMallocHost((void**)&dense_CPCs, dense_cpc_size));
     bzero(dense_CPCs, 3*TV->nPoints);
@@ -593,13 +609,25 @@ void * parallel_work(void *parallel_arguments) {
     if (_my_args.no_partitioning) {
         my_partition_id = 0; // Guarantee single iteration
     }
+    int max_in_partition = 0;
+    std::vector<std::pair<int, int>> partition_metadata;
     /*
-    // DEBUG: Only loop certain partitions
-    unsigned int approved_partition_ids[] = {9,};
-    for (unsigned int my_partition_id : approved_partition_ids)
+    for (int partition_idx = my_partition_id; partition_idx < TV->n_partitions; partition_idx += n_parallel)
     */
-    for (; my_partition_id < TV->n_partitions; my_partition_id += n_parallel)
+    for (int partition_idx : {46,10})
     {
+        partition_metadata.emplace_back(std::pair<int, int>(TV->n_per_partition[partition_idx], partition_idx));
+    }
+    // Sort for traversal order (DESCENDING)
+    std::sort(partition_metadata.rbegin(), partition_metadata.rend());
+    max_in_partition = partition_metadata[0].first;
+    if (_my_args.debug > NO_DEBUG) {
+        out << INFO_EMOJI << timername << " works on at most "
+            << max_in_partition << " points in a single partition" << std::endl;
+    }
+
+    for (std::pair<int, int> part_meta : partition_metadata) {
+        my_partition_id = part_meta.second;
         // TV-localization
         sprintf(intervalname, "%s TV localization for partition %d", timername, my_partition_id);
         timer.label_next_interval(intervalname);
@@ -615,16 +643,17 @@ void * parallel_work(void *parallel_arguments) {
             max_VV_local = get_approx_max_VV(*TV_local, TV_local->nPoints, _my_args.debug);
             // Ensure partitioning data is set correctly
             TV_local->n_partitions = 1;
-            std::vector<int> local_partitionIDs(TV_local->nPoints, 1);
-            TV_local->partitionIDs = std::move(local_partitionIDs);
+            int * local_partitionIDs = new int[TV_local->nPoints];
+            // Cannot new-initialize with non-default value, but need default = 1
+            memset(local_partitionIDs, 1, TV_local->nPoints);
+            TV_local->partitionIDs = local_partitionIDs;
         }
         else {
             // Determine the number of points and cells
             vtkIdType nth_tetra = 0, n_points = 0, n_cells = 0;
             std::vector<std::array<vtkIdType, nbVertsInCell>> cells;
-            std::vector<int> partition_IDs;
-            std::vector<double> vertexAttributes;
             // First order inclusion: All points of any tetra with one or more vertices included in partition
+            // MAYBE TODO: Parallelize this, then sort on n_th tetra key?
             for (const auto & VertList : (*TV)) {
                 for (const vtkIdType vertex : VertList) {
                     if (TV->partitionIDs[vertex] == my_partition_id) {
@@ -660,32 +689,30 @@ void * parallel_work(void *parallel_arguments) {
                         partition_remapping.at(TV->cells[tetra_id][3]),
                         });
             }
-            // Now fetch data for partition inclusion and scalars using inv map
-            for (vtkIdType vertex : inverse_partition_mapping) {
-                // Partition == 0 will skip classification in SFCP kernel
-                partition_IDs.emplace_back(TV->partitionIDs[vertex] == my_partition_id);
-                vertexAttributes.emplace_back(TV->vertexAttributes[vertex]);
-            }
             n_points = included_points.size();
             n_cells = cells.size();
+
+            double * localVertexAttributes = new double[n_points];
+            int * partition_IDs = new int[n_points];
+            // Now fetch data for partition inclusion and scalars using inv map
+            nth_point = 0;
+            for (vtkIdType vertex : inverse_partition_mapping) {
+                // Partition == 0 will skip classification in SFCP kernel
+                partition_IDs[nth_point] = (TV->partitionIDs[vertex] == my_partition_id);
+                localVertexAttributes[nth_point++] = TV->vertexAttributes[vertex];
+            }
 
             // Set TV_local using localized data
             TV_local = new TV_Data(n_points, n_cells);
             TV_local->n_partitions = 2; // You're in-partition or out-of-partition
             TV_local->cells = std::move(cells);
-            TV_local->partitionIDs = std::move(partition_IDs);
-            TV_local->vertexAttributes = std::move(vertexAttributes);
+            TV_local->partitionIDs = partition_IDs;
+            TV_local->vertexAttributes = localVertexAttributes;
             max_VV_local = get_approx_max_VV(*TV_local, n_points, _my_args.debug);
-            vtkIdType n_in_partition = 0;
-            for (vtkIdType i = 0; i < n_points; i++) {
-                if (TV_local->partitionIDs[i] != 0) {
-                    n_in_partition++;
-                }
-            }
             if (_my_args.debug > NO_DEBUG) {
                 out << INFO_EMOJI << timername << " works on partition "
                     << my_partition_id << " with " << n_points << " points and "
-                    << n_cells << " cells (" << n_in_partition
+                    << n_cells << " cells (" << TV->n_per_partition[my_partition_id]
                     << " points are within partition)" << std::endl;
             }
         }
@@ -703,68 +730,70 @@ void * parallel_work(void *parallel_arguments) {
         sprintf(intervalname, "%s VV setup", timername);
         timer.label_next_interval(intervalname);
         timer.tick();
-        int * host_flat_tv,
-            * device_tv,
-            * partition,
-            * vv_computed;
-        unsigned int * vv_index;
+        // Subsize within allocation OR new required allocation size
         size_t tv_flat_size = sizeof(int) * TV_local->nCells * nbVertsInCell,
-               partition_size = sizeof(int) * TV_local->nPoints,
                vv_size = sizeof(int) * TV_local->nPoints * max_VV_local,
+               partition_size = sizeof(int) * TV_local->nPoints,
                vv_index_size = sizeof(unsigned int) * TV_local->nPoints;
+        if (TV_local->nCells > max_allocated_cells ||
+            (max_VV_local*TV_local->nPoints) > (max_allocated_VV*max_allocated_VV) ||
+            TV_local->nPoints > max_allocated_points) {
+            // First allocate or reallocate: Announce expected sizes before possibly running OOM
+            if (_my_args.debug > DEBUG_MIN && max_allocated_cells == 0) {
+                out << INFO_EMOJI << timername << "'s estimated VV memory footprint: "
+                    << (tv_flat_size+partition_size+vv_size+vv_index_size) / static_cast<float>(1024*1024*1024)
+                    << " GiB" << std::endl;
+            }
+            // ABUNDANCE OF CAUTION, but we should not be doing any GPU operations on this stream that could be interfered with
+            CUDA_WARN(cudaStreamSynchronize(thread_stream));
+            if (TV_local->nCells > max_allocated_cells) {
+                if (device_tv != nullptr) CUDA_WARN(cudaFree(device_tv));
+                CUDA_ASSERT(cudaMalloc((void**)&device_tv, tv_flat_size));
+                if (host_flat_tv != nullptr) CUDA_WARN(cudaFreeHost(host_flat_tv));
+                CUDA_ASSERT(cudaMallocHost((void**)&host_flat_tv, tv_flat_size));
+                max_allocated_cells = TV_local->nCells;
+            }
+            if ((max_VV_local*TV_local->nPoints) > (max_allocated_VV*max_allocated_VV)) {
+                if (vv_computed != nullptr) cudaFree(vv_computed);
+                CUDA_ASSERT(cudaMalloc((void**)&vv_computed, vv_size));
+                max_allocated_VV = max_VV_local;
+            }
+            if (TV_local->nPoints > max_allocated_points) {
+                if (partition != nullptr) cudaFree(partition);
+                CUDA_ASSERT(cudaMalloc((void**)&partition, partition_size));
+                if (vv_index != nullptr) cudaFree(vv_index);
+                CUDA_ASSERT(cudaMalloc((void**)&vv_index, vv_index_size));
+                max_allocated_points = TV_local->nPoints;
+            }
+        }
+
+        // VV Kernel Launch Specs
         if (_my_args.debug > DEBUG_MIN) {
             out << PUSHPIN_EMOJI << timername << " will use GPU " << gpu_id
                 << " (Actual GPU ID: " << vgpu_id << ") to compute "
-                YELLOW_COLOR "VV" RESET_COLOR << std::endl
-        // Announce expected sizes before possibly running OOM
-                << INFO_EMOJI << timername << "'s estimated VV memory footprint: "
-                << (tv_flat_size+partition_size+vv_size+vv_index_size) / static_cast<float>(1024*1024*1024)
-                << " GiB" << std::endl;
+                YELLOW_COLOR "VV" RESET_COLOR << std::endl;
         }
-        // Allocated separately because we can release it earlier
-        CUDA_ASSERT(cudaMalloc((void**)&device_tv, tv_flat_size));
-        // TODO: Allocate together because we can release them simultaneously
-        CUDA_ASSERT(cudaMalloc((void**)&partition, partition_size));
-        CUDA_ASSERT(cudaMalloc((void**)&vv_computed, vv_size));
-        CUDA_ASSERT(cudaMalloc((void**)&vv_index, vv_index_size));
-
-        // VV Kernel Launch Specs
         int n_to_compute = TV_local->nCells * nbVertsInCell;
         dim3 thread_block_size = 1024,
              grid_size = (n_to_compute + thread_block_size.x - 1) / thread_block_size.x;
 
         // Set contiguous data in host memory -- separate scope to assist compiler
         {
-            // Not host-pinning memory because this buffer won't be re-used
-            host_flat_tv = new int[tv_flat_size / sizeof(int)];
             int index = 0;
+            // TODO: Parallelize this
             for (const auto & VertList : (*TV_local))
                 for (const vtkIdType vertex : VertList)
                     host_flat_tv[index++] = vertex;
-            // Device copy and host free
-            // BLOCKING -- provide barrier if made asynchronous to avoid free of host
-            // memory before copy completes
+            // Device copies
             CUDA_WARN(cudaMemcpyAsync(device_tv, host_flat_tv, tv_flat_size,
                                       cudaMemcpyHostToDevice, thread_stream));
-            CUDA_WARN(cudaStreamSynchronize(thread_stream));
-            // Free memory
-            delete host_flat_tv;
-
-
-            // Pre-populate vv!
             CUDA_WARN(cudaMemsetAsync(vv_computed, -1, vv_size, thread_stream));
             CUDA_WARN(cudaMemsetAsync(vv_index, 0, vv_index_size, thread_stream));
-
-
-            int * partition_id_settings = new int[TV_local->nPoints]();
-            for (int j = 0; j < TV_local->nPoints; j++) {
-                partition_id_settings[j] = TV_local->partitionIDs[j];
-            }
-            CUDA_WARN(cudaMemcpyAsync(partition, partition_id_settings,
+            CUDA_WARN(cudaMemcpyAsync(partition, TV_local->partitionIDs,
                                       partition_size, cudaMemcpyHostToDevice,
                                       thread_stream));
+            // Block to time out this portion accurately
             CUDA_WARN(cudaStreamSynchronize(thread_stream));
-            delete partition_id_settings;
         }
 
         // Compute the relationship
@@ -795,7 +824,7 @@ void * parallel_work(void *parallel_arguments) {
         */
         KERNEL_WARN(VV_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
                                 thread_block_size KERNEL_LAUNCH_SEPARATOR
-                                0 KERNEL_LAUNCH_SEPARATOR
+                                0 /* shmem */ KERNEL_LAUNCH_SEPARATOR
                                 thread_stream>>>(device_tv,
                                     TV_local->nCells,
                                     TV_local->nPoints,
@@ -813,41 +842,46 @@ void * parallel_work(void *parallel_arguments) {
                            TV_local->nPoints, TV_local->nCells, vv_computed,
                            vv_index, device_tv, thread_stream);
         */
-        // No longer need TV allocation, free it
-        CUDA_WARN(cudaFree(device_tv));
         // NOTE: Asynchronous WRT CPU, we can continue to setup SFCP kernel while VV runs
 
         // Additional allocations and settings for SFCP kernel
         sprintf(intervalname, "%s Setup for SFCP kernel", timername);
         timer.label_next_interval(intervalname);
         timer.tick();
-        unsigned int * host_CPCs, // This one is returnable!!
-                     * device_CPCs;
-        int * device_valences;
-        double * device_scalar_values;
-        const int shared_mem_size = sizeof(unsigned int) * (2+max_VV_local);
-        size_t cpc_size = sizeof(unsigned int) * TV_local->nPoints * 3,
-               valence_size = sizeof(int) * TV_local->nPoints * max_VV_local,
+
+        size_t valence_size = sizeof(int) * TV_local->nPoints * max_VV_local,
+               cpc_size = sizeof(unsigned int) * TV_local->nPoints * 3,
                scalar_values_size = sizeof(double) * TV_local->nPoints;
-
+        // SHMEM size in kernel is NOT allocated by driver code, so let this
+        // be set for each partition
+        const size_t shared_mem_size = sizeof(unsigned int) * (2+max_VV_local);
         {
-            CUDA_ASSERT(cudaMalloc((void**)&device_CPCs, cpc_size));
-            CUDA_ASSERT(cudaMalloc((void**)&device_valences, valence_size));
-            CUDA_ASSERT(cudaMalloc((void**)&device_scalar_values, scalar_values_size));
+            // Abundance of caution but should be unnecessary:
+            CUDA_WARN(cudaStreamSynchronize(thread_stream));
 
-            double * scalar_values = new double[TV_local->nPoints];
-            // Scalar values from VTK
-            for(int j = 0; j < TV_local->nPoints; j++) {
-                scalar_values[j] = TV_local->vertexAttributes[j];
+            // First-touch allocate or reallocate
+            if ((max_VV_local * TV_local->nPoints) > (max_allocated_SFCP_points * max_allocated_SFCP_VV)) {
+                if (device_valences != nullptr) CUDA_WARN(cudaFree(device_valences));
+                CUDA_ASSERT(cudaMalloc((void**)&device_valences, valence_size));
+                max_allocated_SFCP_VV = max_VV_local;
             }
+            if (TV_local->nPoints > max_allocated_SFCP_points) {
+                if (device_CPCs != nullptr) CUDA_WARN(cudaFree(device_CPCs));
+                CUDA_ASSERT(cudaMalloc((void**)&device_CPCs, cpc_size));
+                if (host_CPCs != nullptr) CUDA_WARN(cudaFreeHost(host_CPCs));
+                CUDA_ASSERT(cudaMallocHost((void**)&host_CPCs, cpc_size));
+                if (device_scalar_values != nullptr) CUDA_WARN(cudaFree(device_scalar_values));
+                CUDA_ASSERT(cudaMalloc((void**)&device_scalar_values, scalar_values_size));
+                max_allocated_SFCP_points = TV_local->nPoints;
+            }
+
             // MADE BLOCKING to prevent early free
-            CUDA_WARN(cudaMemcpyAsync(device_scalar_values, scalar_values,
+            CUDA_WARN(cudaMemcpyAsync(device_scalar_values, TV_local->vertexAttributes,
                                       scalar_values_size, cudaMemcpyHostToDevice,
                                       thread_stream));
             // We need CPCs to be zero'd out
             CUDA_WARN(cudaMemsetAsync(device_CPCs, 0, cpc_size, thread_stream));
             CUDA_WARN(cudaStreamSynchronize(thread_stream));
-            delete scalar_values;
         }
         timer.tick_announce();
 
@@ -896,13 +930,13 @@ void * parallel_work(void *parallel_arguments) {
                                  thread_block_size KERNEL_LAUNCH_SEPARATOR
                                  shared_mem_size KERNEL_LAUNCH_SEPARATOR
                                  thread_stream>>>(vv_computed,
-                                                    vv_index,
-                                                    device_valences,
-                                                    TV_local->nPoints,
-                                                    max_VV_local,
-                                                    device_scalar_values,
-                                                    partition,
-                                                    device_CPCs));
+                                                  vv_index,
+                                                  device_valences,
+                                                  TV_local->nPoints,
+                                                  max_VV_local,
+                                                  device_scalar_values,
+                                                  partition,
+                                                  device_CPCs));
         CUDA_WARN(cudaStreamSynchronize(thread_stream)); // Make algorithm timing accurate
         sfcpKernel.tick();
         sprintf(intervalname, "%s SFCP kernel", timername);
@@ -911,8 +945,6 @@ void * parallel_work(void *parallel_arguments) {
         sprintf(intervalname, "%s Retrieve results from GPU", timername);
         timer.label_next_interval(intervalname);
         timer.tick();
-        // Reminder! This is returnable memory by this function!
-        CUDA_ASSERT(cudaMallocHost((void**)&host_CPCs, cpc_size));
         // In the event 0-values are intended, zero out the buffer PRIOR to copying?
         memset(host_CPCs, 0, cpc_size);
         // Synchronous wrt this thread, not others
@@ -925,6 +957,7 @@ void * parallel_work(void *parallel_arguments) {
         }
         else {
             // Restore original dense mapping (accumulates between loop iterations)
+            // TODO: Parallelize embarassingly
             for (vtkIdType i = 0; i < TV_local->nPoints; i++) {
                 if (TV_local->partitionIDs[i] == 0) {
                     // Point isn't classified by THIS partition, but do NOT overwrite it!
@@ -951,15 +984,18 @@ void * parallel_work(void *parallel_arguments) {
         sprintf(intervalname, "%s Free memory", timername);
         timer.label_next_interval(intervalname);
         timer.tick();
-        if (vv_computed != nullptr) CUDA_WARN(cudaFree(vv_computed));
-        if (vv_index != nullptr) CUDA_WARN(cudaFree(vv_index));
-        if (partition != nullptr) CUDA_WARN(cudaFree(partition));
-        if (device_CPCs != nullptr) CUDA_WARN(cudaFree(device_CPCs));
-        if (device_valences != nullptr) CUDA_WARN(cudaFree(device_valences));
-        if (device_scalar_values != nullptr) CUDA_WARN(cudaFree(device_scalar_values));
-        if (host_CPCs != nullptr && !_my_args.no_partitioning) CUDA_WARN(cudaFreeHost(host_CPCs));
         timer.tick_announce();
     }
+    // Free allocated memory
+    if (host_flat_tv != nullptr) CUDA_WARN(cudaFreeHost(host_flat_tv));
+    if (device_tv != nullptr) CUDA_WARN(cudaFree(device_tv));
+    if (partition != nullptr) CUDA_WARN(cudaFree(partition));
+    if (vv_computed != nullptr) CUDA_WARN(cudaFree(vv_computed));
+    if (device_valences != nullptr) CUDA_WARN(cudaFree(device_valences));
+    if (vv_index != nullptr) CUDA_WARN(cudaFree(vv_index));
+    if (host_CPCs != nullptr && !_my_args.no_partitioning) CUDA_WARN(cudaFreeHost(host_CPCs));
+    if (device_CPCs != nullptr) CUDA_WARN(cudaFree(device_CPCs));
+    if (device_scalar_values != nullptr) CUDA_WARN(cudaFree(device_scalar_values));
     return (void*)dense_CPCs;
 }
 
