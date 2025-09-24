@@ -647,11 +647,12 @@ void * parallel_work(void *parallel_arguments) {
             TV_local->partitionIDs = local_partitionIDs;
         }
         else {
+            // START TV LOCALIZATION -- THIS TAKES A WHILE
             // Determine the number of points and cells
             vtkIdType nth_tetra = 0, n_points = 0, n_cells = 0;
             std::vector<std::array<vtkIdType, nbVertsInCell>> cells;
             // First order inclusion: All points of any tetra with one or more vertices included in partition
-            // MAYBE TODO: Parallelize this, then sort on n_th tetra key?
+            // MAYBE TODO: Parallelize this and then take union of sets before sorting with stable_vertices?
             for (const auto & VertList : (*TV)) {
                 for (const vtkIdType vertex : VertList) {
                     if (TV->partitionIDs[vertex] == my_partition_id) {
@@ -667,14 +668,15 @@ void * parallel_work(void *parallel_arguments) {
                 }
                 nth_tetra++;
             }
+            // I assume --this-- begins the block of most costly localization
+
             // Now all included points and cells are known -- make stable remapping
             std::map<vtkIdType, vtkIdType> partition_remapping;
             std::vector<vtkIdType> stable_vertices(included_points.begin(), included_points.end());
             std::sort(stable_vertices.begin(), stable_vertices.end());
             vtkIdType nth_point = 0;
             for (const vtkIdType point : stable_vertices) {
-                partition_remapping.insert({point, nth_point});
-                nth_point++;
+                partition_remapping.insert({point, nth_point++});
             }
             // This is correct, save an operation or two
             inverse_partition_mapping = std::move(stable_vertices);
@@ -687,6 +689,8 @@ void * parallel_work(void *parallel_arguments) {
                         partition_remapping.at(TV->cells[tetra_id][3]),
                         });
             }
+            // I assume --this-- ends the block of most costly localization
+
             n_points = included_points.size();
             n_cells = cells.size();
 
@@ -694,6 +698,7 @@ void * parallel_work(void *parallel_arguments) {
             int * partition_IDs = new int[n_points];
             // Now fetch data for partition inclusion and scalars using inv map
             nth_point = 0;
+            // TODO: Embarassingly parallel copy possible on nth_point as index
             for (vtkIdType vertex : inverse_partition_mapping) {
                 // Partition == 0 will skip classification in SFCP kernel
                 partition_IDs[nth_point] = (TV->partitionIDs[vertex] == my_partition_id);
@@ -706,13 +711,20 @@ void * parallel_work(void *parallel_arguments) {
             TV_local->cells = std::move(cells);
             TV_local->partitionIDs = partition_IDs;
             TV_local->vertexAttributes = localVertexAttributes;
-            max_VV_local = get_approx_max_VV(*TV_local, n_points, _my_args.debug);
+            // Hack: assume first measurement is sufficient for all subsequent partitions
+            if (max_allocated_VV == 0) {
+                max_VV_local = get_approx_max_VV(*TV_local, n_points, _my_args.debug);
+            }
+            else {
+                max_VV_local = max_allocated_VV;
+            }
             if (_my_args.debug > NO_DEBUG) {
                 out << INFO_EMOJI << timername << " works on partition "
                     << my_partition_id << " with " << n_points << " points and "
                     << n_cells << " cells (" << TV->n_per_partition[my_partition_id]
                     << " points are within partition)" << std::endl;
             }
+            // END TV LOCALIZATION
         }
         if (max_VV_override != -1) {
             if (_my_args.debug > NO_DEBUG) {
@@ -734,7 +746,7 @@ void * parallel_work(void *parallel_arguments) {
                partition_size = sizeof(int) * TV_local->nPoints,
                vv_index_size = sizeof(unsigned int) * TV_local->nPoints;
         if (TV_local->nCells > max_allocated_cells ||
-            (max_VV_local*TV_local->nPoints) > (max_allocated_VV*max_allocated_VV) ||
+            (max_VV_local*TV_local->nPoints) > (max_allocated_VV*max_allocated_points) ||
             TV_local->nPoints > max_allocated_points) {
             // First allocate or reallocate: Announce expected sizes before possibly running OOM
             if (_my_args.debug > DEBUG_MIN && max_allocated_cells == 0) {

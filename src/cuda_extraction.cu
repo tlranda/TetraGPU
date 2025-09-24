@@ -1057,6 +1057,77 @@ __global__ void VV_kernel(const int * __restrict__ tv,
     }
 }
 
+/*
+int get_approx_max_VV_parallel_GPT_FAIL(const TV_Data & TV, const vtkIdType n_points, const int debug=NO_DEBUG) {
+// New includes required in includes/cuda_extraction.h for get_approx_max_VV_parallel_GPT_FAIL()
+/ *
+#include <atomic>
+#include <algorithm>
+#include <memory>
+#include <mutex>
+#include <thread>
+* /
+std::unique_ptr<std::atomic<vtkIdType>[]> appears(new std::atomic<vtkIdType>[n_points]());
+
+    // Set number of threads
+    / *
+       const unsigned int hardware_threads = std::thread::hardware_concurrency(),
+                          threads = std::max(hardware_threads, 2u);
+    * /
+    const unsigned int threads = 24;
+    // Deivide work into chunks
+    const size_t block_size = TV.cells.size() / threads;
+    std::atomic<int> mode_count{0};
+
+    // Thread synchro
+    std::vector<std::thread> thread_vec;
+
+    // Lambda processes a chunk from TV
+    auto process_chunk = [&](size_t start, size_t end) {
+        int local_mode_count = 0;
+        for (size_t i = start; i < end; ++i) {
+            const auto& cell = TV.cells[i];
+            for (const vtkIdType vertex : cell) {
+                // Atomic increment
+                int current_count = appears[vertex].fetch_add(1, std::memory_order_relaxed);
+                // Thread-safe mode count update with CAS logic
+                int expected = local_mode_count;
+                while (current_count + 1 > expected) {
+                    if (current_count + 1 <= expected) break;
+                    if(mode_count.compare_exchange_weak(
+                                expected,
+                                current_count+1,
+                                std::memory_order_relaxed,
+                                std::memory_order_relaxed)) {
+                        local_mode_count = current_count + 1;
+                        break;
+                    }
+                }
+            }
+        }
+    };
+
+    // Create threads to process chunks
+    for (unsigned int t = 0; t < threads; ++t) {
+        size_t start = t * block_size,
+               end = (t == threads - 1) ? TV.cells.size() : start + block_size;
+        thread_vec.emplace_back(process_chunk, start, end);
+    }
+    // Join
+    for (auto& thread_ : thread_vec) {
+        thread_.join();
+    }
+
+    // Final output
+    int final_count = mode_count.load(std::memory_order_relaxed);
+    final_count = ((final_count+31)/32)*32;
+    if (debug > NO_DEBUG)
+        std::cerr << INFO_EMOJI << "Approximated max " YELLOW_COLOR "VV"
+                     RESET_COLOR " adjacency: " << final_count << std::endl;
+    return final_count;
+}
+*/
+
 int get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points, const int debug=NO_DEBUG) {
     // This calculation does NOT need to be exact, it needs to upper-bound
     // our memory usage. In order to do so, we count the largest number of
@@ -1064,7 +1135,7 @@ int get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points, const int de
     // vertex is the center-point of a "sphere" of cells which each have 3
     // unique vertices forming the rest of the cell, so 3*MAX(appear) is our
     // upper bound
-    std::vector<int> appears(n_points, 0);
+    int *appears = new int[n_points]();
     int max = 0;
     std::for_each(TV.begin(), TV.end(),
             [&](const std::array<vtkIdType,nbVertsInCell> cell) {
@@ -1077,6 +1148,7 @@ int get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points, const int de
     // Minimum warp width for help with consistency
     // TODO: Possibly round this UP to a multiple of 32 for threadblock alignment nice-ness
     max = ((max+31)/32)*32;
+    delete[] appears;
     if (debug > NO_DEBUG)
         std::cerr << INFO_EMOJI << "Approximated max " YELLOW_COLOR "VV"
                      RESET_COLOR " adjacency: " << max << std::endl;
