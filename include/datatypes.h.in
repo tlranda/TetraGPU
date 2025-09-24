@@ -66,8 +66,8 @@ struct TV_Data {
     //std::unique_ptr<vtkIdType[]> cells;
     std::vector<std::array<vtkIdType,nbVertsInCell>> cells;
     // These vectors are std::move()'d to, rather than being initialized
-    std::vector<double> vertexAttributes;
-    std::vector<int> partitionIDs;
+    double * vertexAttributes;
+    int * partitionIDs, * n_per_partition;
     int n_partitions;
 
     TV_Data(vtkIdType _points, vtkIdType _cells) {
@@ -75,6 +75,20 @@ struct TV_Data {
         nCells = _cells;
         cells.resize(nCells);
         n_partitions = 1;
+        vertexAttributes = nullptr;
+        partitionIDs = nullptr;
+        n_per_partition = nullptr;
+    }
+    ~TV_Data(void) {
+        if (vertexAttributes != nullptr) {
+            delete[] vertexAttributes;
+        }
+        if (partitionIDs != nullptr) {
+            delete[] partitionIDs;
+        }
+        if (n_per_partition != nullptr) {
+            delete[] n_per_partition;
+        }
     }
 
     // Foreach iterators go over the cells vector

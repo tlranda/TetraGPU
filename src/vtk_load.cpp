@@ -152,15 +152,18 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
         std::cerr << EXCLAIM_EMOJI << "No vertex attributes found in the dataset" << std::endl;
         exit(EXIT_FAILURE);
     }
-    std::vector<double> vertexAttributeValues(nPoints);
-    for (vtkIdType i = 0; i < nPoints; i++) vertexAttributeValues[i] = vertexAttributes->GetTuple1(i);
-    data->vertexAttributes = std::move(vertexAttributeValues);
+    double * copyVertexAttributes = new double[nPoints];
+    for (vtkIdType i = 0; i < nPoints; i++) copyVertexAttributes[i] = vertexAttributes->GetTuple1(i);
+    data->vertexAttributes = copyVertexAttributes;
 
     // Retrieve partitioning IDs
     if (args.partitioningname == "") {
         // Default everything into a single partition
-        std::vector<int> partitionIDs(nPoints,0);
-        data->partitionIDs = std::move(partitionIDs);
+        int * meshPartitionIDs = new int[nPoints]();
+        data->partitionIDs = meshPartitionIDs;
+        int * mesh_n_per_partition = new int[1];
+        mesh_n_per_partition[0] = nPoints;
+        data->n_per_partition = mesh_n_per_partition;
     }
     else {
         // Re-use pd from scalar fetch, similar process
@@ -177,13 +180,22 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
             exit(EXIT_FAILURE);
         }
         vtkDataArray* partitionAttribute = pd->GetArray(use_this_array);
-        std::vector<int> partitionIDs(nPoints);
-        for (vtkIdType i = 0; i < nPoints; i++) partitionIDs[i] = partitionAttribute->GetTuple1(i);
-        // Determine the number of partitions
-        std::set<int> partition_set(partitionIDs.begin(), partitionIDs.end());
+        int * meshPartitionIDs = new int[nPoints];
+        // Determine the number of partitions and their counts
+        // TODO: Parallelize
+        for (vtkIdType i = 0; i < nPoints; i++) {
+            meshPartitionIDs[i] = partitionAttribute->GetTuple1(i);
+        }
+        std::set<int> partition_set(meshPartitionIDs, meshPartitionIDs+nPoints);
         data->n_partitions = partition_set.size();
+        int * mesh_n_per_partition = new int[data->n_partitions]();
+        // TODO: Parallelize
+        for (vtkIdType i = 0; i < nPoints; i++) {
+            mesh_n_per_partition[meshPartitionIDs[i]]++;
+        }
         std::cout << "Using " << data->n_partitions << " partitions from " << args.partitioningname << std::endl;
-        data->partitionIDs = std::move(partitionIDs);
+        data->partitionIDs = meshPartitionIDs;
+        data->n_per_partition = mesh_n_per_partition;
     }
 
     return data;
