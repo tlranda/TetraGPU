@@ -611,10 +611,8 @@ void * parallel_work(void *parallel_arguments) {
     }
     int max_in_partition = 0;
     std::vector<std::pair<int, int>> partition_metadata;
-    /*
     for (int partition_idx = my_partition_id; partition_idx < TV->n_partitions; partition_idx += n_parallel)
-    */
-    for (int partition_idx : {46,10})
+    //for (int partition_idx : {46,10}) // Analyze ONLY the listed partitions!
     {
         partition_metadata.emplace_back(std::pair<int, int>(TV->n_per_partition[partition_idx], partition_idx));
     }
@@ -747,18 +745,27 @@ void * parallel_work(void *parallel_arguments) {
             // ABUNDANCE OF CAUTION, but we should not be doing any GPU operations on this stream that could be interfered with
             CUDA_WARN(cudaStreamSynchronize(thread_stream));
             if (TV_local->nCells > max_allocated_cells) {
+                if (_my_args.debug > DEBUG_MIN) {
+                    out << WARN_EMOJI << timername << " Allocate (or reallocate) host and device TVs" << std::endl;
+                }
                 if (device_tv != nullptr) CUDA_WARN(cudaFree(device_tv));
                 CUDA_ASSERT(cudaMalloc((void**)&device_tv, tv_flat_size));
                 if (host_flat_tv != nullptr) CUDA_WARN(cudaFreeHost(host_flat_tv));
                 CUDA_ASSERT(cudaMallocHost((void**)&host_flat_tv, tv_flat_size));
                 max_allocated_cells = TV_local->nCells;
             }
-            if ((max_VV_local*TV_local->nPoints) > (max_allocated_VV*max_allocated_VV)) {
+            if ((max_VV_local*TV_local->nPoints) > (max_allocated_VV*max_allocated_points)) {
+                if (_my_args.debug > DEBUG_MIN) {
+                    out << WARN_EMOJI << timername << " Allocate (or reallocate) vv_computed buffers" << std::endl;
+                }
                 if (vv_computed != nullptr) cudaFree(vv_computed);
                 CUDA_ASSERT(cudaMalloc((void**)&vv_computed, vv_size));
                 max_allocated_VV = max_VV_local;
             }
             if (TV_local->nPoints > max_allocated_points) {
+                if (_my_args.debug > DEBUG_MIN) {
+                    out << WARN_EMOJI << timername << " Allocate (or reallocate) partition and vv_index buffers" << std::endl;
+                }
                 if (partition != nullptr) cudaFree(partition);
                 CUDA_ASSERT(cudaMalloc((void**)&partition, partition_size));
                 if (vv_index != nullptr) cudaFree(vv_index);
@@ -855,34 +862,39 @@ void * parallel_work(void *parallel_arguments) {
         // SHMEM size in kernel is NOT allocated by driver code, so let this
         // be set for each partition
         const size_t shared_mem_size = sizeof(unsigned int) * (2+max_VV_local);
-        {
-            // Abundance of caution but should be unnecessary:
-            CUDA_WARN(cudaStreamSynchronize(thread_stream));
+        // Abundance of caution but should be unnecessary:
+        CUDA_WARN(cudaStreamSynchronize(thread_stream));
 
-            // First-touch allocate or reallocate
-            if ((max_VV_local * TV_local->nPoints) > (max_allocated_SFCP_points * max_allocated_SFCP_VV)) {
-                if (device_valences != nullptr) CUDA_WARN(cudaFree(device_valences));
-                CUDA_ASSERT(cudaMalloc((void**)&device_valences, valence_size));
-                max_allocated_SFCP_VV = max_VV_local;
+        // First-touch allocate or reallocate
+        if ((max_VV_local * TV_local->nPoints) > (max_allocated_SFCP_points * max_allocated_SFCP_VV)) {
+            if (_my_args.debug > DEBUG_MIN) {
+                out << WARN_EMOJI << timername << " Allocate (or reallocate) device valences" << std::endl;
             }
-            if (TV_local->nPoints > max_allocated_SFCP_points) {
-                if (device_CPCs != nullptr) CUDA_WARN(cudaFree(device_CPCs));
-                CUDA_ASSERT(cudaMalloc((void**)&device_CPCs, cpc_size));
-                if (host_CPCs != nullptr) CUDA_WARN(cudaFreeHost(host_CPCs));
-                CUDA_ASSERT(cudaMallocHost((void**)&host_CPCs, cpc_size));
-                if (device_scalar_values != nullptr) CUDA_WARN(cudaFree(device_scalar_values));
-                CUDA_ASSERT(cudaMalloc((void**)&device_scalar_values, scalar_values_size));
-                max_allocated_SFCP_points = TV_local->nPoints;
-            }
-
-            // MADE BLOCKING to prevent early free
-            CUDA_WARN(cudaMemcpyAsync(device_scalar_values, TV_local->vertexAttributes,
-                                      scalar_values_size, cudaMemcpyHostToDevice,
-                                      thread_stream));
-            // We need CPCs to be zero'd out
-            CUDA_WARN(cudaMemsetAsync(device_CPCs, 0, cpc_size, thread_stream));
-            CUDA_WARN(cudaStreamSynchronize(thread_stream));
+            if (device_valences != nullptr) CUDA_WARN(cudaFree(device_valences));
+            CUDA_ASSERT(cudaMalloc((void**)&device_valences, valence_size));
+            max_allocated_SFCP_VV = max_VV_local;
         }
+        if (TV_local->nPoints > max_allocated_SFCP_points) {
+            if (_my_args.debug > DEBUG_MIN) {
+                out << WARN_EMOJI << timername << " Allocate (or reallocate) host and device CPCs and device scalar values" << std::endl;
+            }
+            if (device_CPCs != nullptr) CUDA_WARN(cudaFree(device_CPCs));
+            CUDA_ASSERT(cudaMalloc((void**)&device_CPCs, cpc_size));
+            if (host_CPCs != nullptr) CUDA_WARN(cudaFreeHost(host_CPCs));
+            CUDA_ASSERT(cudaMallocHost((void**)&host_CPCs, cpc_size));
+            if (device_scalar_values != nullptr) CUDA_WARN(cudaFree(device_scalar_values));
+            CUDA_ASSERT(cudaMalloc((void**)&device_scalar_values, scalar_values_size));
+            max_allocated_SFCP_points = TV_local->nPoints;
+        }
+
+        // MADE BLOCKING to prevent early free
+        CUDA_WARN(cudaMemcpyAsync(device_scalar_values, TV_local->vertexAttributes,
+                                  scalar_values_size, cudaMemcpyHostToDevice,
+                                  thread_stream));
+        // We need CPCs to be zero'd out
+        CUDA_WARN(cudaMemsetAsync(device_valences, 0, valence_size, thread_stream));
+        CUDA_WARN(cudaMemsetAsync(device_CPCs, 0, cpc_size, thread_stream));
+        CUDA_WARN(cudaStreamSynchronize(thread_stream));
         timer.tick_announce();
 
         /*
@@ -980,13 +992,11 @@ void * parallel_work(void *parallel_arguments) {
             }
         }
         timer.tick_announce();
-
-        sprintf(intervalname, "%s Free memory", timername);
-        timer.label_next_interval(intervalname);
-        timer.tick();
-        timer.tick_announce();
     }
     // Free allocated memory
+    sprintf(intervalname, "%s Free memory", timername);
+    timer.label_next_interval(intervalname);
+    timer.tick();
     if (host_flat_tv != nullptr) CUDA_WARN(cudaFreeHost(host_flat_tv));
     if (device_tv != nullptr) CUDA_WARN(cudaFree(device_tv));
     if (partition != nullptr) CUDA_WARN(cudaFree(partition));
@@ -996,6 +1006,7 @@ void * parallel_work(void *parallel_arguments) {
     if (host_CPCs != nullptr && !_my_args.no_partitioning) CUDA_WARN(cudaFreeHost(host_CPCs));
     if (device_CPCs != nullptr) CUDA_WARN(cudaFree(device_CPCs));
     if (device_scalar_values != nullptr) CUDA_WARN(cudaFree(device_scalar_values));
+    timer.tick_announce();
     return (void*)dense_CPCs;
 }
 
