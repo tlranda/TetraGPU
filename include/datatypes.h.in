@@ -65,6 +65,7 @@ struct TV_Data {
     // For some reason, vector of array is experimentally 20x faster than unique_ptr?
     //std::unique_ptr<vtkIdType[]> cells;
     std::vector<std::array<vtkIdType,nbVertsInCell>> cells;
+    std::vector<std::vector<std::array<vtkIdType,nbVertsInCell>>> TV_partitioned;
     // These vectors are std::move()'d to, rather than being initialized
     double * vertexAttributes;
     int * partitionIDs, * n_per_partition;

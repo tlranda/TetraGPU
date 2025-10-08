@@ -197,6 +197,20 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
         data->partitionIDs = meshPartitionIDs;
         data->n_per_partition = mesh_n_per_partition;
     }
+    // Make union of internal/external by cell available
+    std::vector<std::vector<std::array<vtkIdType,nbVertsInCell>>> TV_partitioned(data->n_partitions);
+    std::set<int> partitions_used;
+    for (const auto VertList : data->cells) {
+        partitions_used.clear();
+        for (const vtkIdType vertex : VertList) {
+            partitions_used.insert(data->partitionIDs[vertex]);
+        }
+        // Now add this cell into all relevant TV structures
+        for (int partition : partitions_used) {
+            TV_partitioned[partition].emplace_back(VertList);
+        }
+    }
+    data->TV_partitioned = std::move(TV_partitioned);
 
     return data;
 }

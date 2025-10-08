@@ -632,6 +632,7 @@ void * parallel_work(void *parallel_arguments) {
         timer.tick();
         TV_Data * TV_local;
         int max_VV_local;
+
         // Have to preserve relative vertex ID ordering for semantic consistency between --no_partition and utilizing partitions
         std::set<vtkIdType> included_points;
         std::vector<vtkIdType> included_cells, inverse_partition_mapping;
