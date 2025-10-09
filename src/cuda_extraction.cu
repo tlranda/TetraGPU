@@ -969,6 +969,7 @@ __global__ void VV_kernel(const int * __restrict__ tv,
                           const int n_cells,
                           const int n_points,
                           const int offset,
+                          const vtkIdType * __restrict__ vvi,
                           unsigned int * __restrict__ index,
                           int * __restrict__ vv) {
     int tid = (blockDim.x * blockIdx.x) + threadIdx.x;
@@ -976,6 +977,9 @@ __global__ void VV_kernel(const int * __restrict__ tv,
 
     // Mark yourself as adjacent to other cells alongside you
     int cell_vertex = tv[tid], v0, v1, v2, v3;
+    // IF INDIRECTED, look up your OWN cell_vertex's indirect value
+    int indirect_index = vvi[tid];
+
     // Use register exchanges within a warp to get all other values
     v0 = __shfl_sync(0xffffffff, cell_vertex, 0, 4);
     v1 = __shfl_sync(0xffffffff, cell_vertex, 1, 4);
@@ -1002,57 +1006,59 @@ __global__ void VV_kernel(const int * __restrict__ tv,
     // of this approach
     bool logged = false;
     if (v0 != cell_vertex) {
-        for (int i = 0; i < index[cell_vertex]; i++) {
-            if (vv[cell_vertex*offset+i] == v0) {
+        // IF INDIRECTED: Plug in indirected value rather than cell_vertex
+        // through this whole block & in all repetitions for v1,v2,v3
+        for (int i = 0; i < index[indirect_index]; i++) {
+            if (vv[indirect_index*offset+i] == v0) {
                 logged = true;
                 break;
             }
         }
         if (!logged) {
-            unsigned long long int new_idx = atomicAdd(&index[cell_vertex],1);
-            vv[cell_vertex*offset+new_idx] = v0;
+            unsigned long long int new_idx = atomicAdd(&index[indirect_index],1);
+            vv[indirect_index*offset+new_idx] = v0;
         }
     }
     // Repeat for v1
     if (v1 != cell_vertex) {
         logged = false;
-        for (int i = 0; i < index[cell_vertex]; i++) {
-            if (vv[cell_vertex*offset+i] == v1) {
+        for (int i = 0; i < index[indirect_index]; i++) {
+            if (vv[indirect_index*offset+i] == v1) {
                 logged = true;
                 break;
             }
         }
         if (!logged) {
-            unsigned long long int new_idx = atomicAdd(&index[cell_vertex],1);
-            vv[cell_vertex*offset+new_idx] = v1;
+            unsigned long long int new_idx = atomicAdd(&index[indirect_index],1);
+            vv[indirect_index*offset+new_idx] = v1;
         }
     }
     // Repeat for v2
     if (v2 != cell_vertex) {
         logged = false;
-        for (int i = 0; i < index[cell_vertex]; i++) {
-            if (vv[cell_vertex*offset+i] == v2) {
+        for (int i = 0; i < index[indirect_index]; i++) {
+            if (vv[indirect_index*offset+i] == v2) {
                 logged = true;
                 break;
             }
         }
         if (!logged) {
-            unsigned long long int new_idx = atomicAdd(&index[cell_vertex],1);
-            vv[cell_vertex*offset+new_idx] = v2;
+            unsigned long long int new_idx = atomicAdd(&index[indirect_index],1);
+            vv[indirect_index*offset+new_idx] = v2;
         }
     }
     // Repeat for v3
     if (v3 != cell_vertex) {
         logged = false;
-        for (int i = 0; i < index[cell_vertex]; i++) {
-            if (vv[cell_vertex*offset+i] == v3) {
+        for (int i = 0; i < index[indirect_index]; i++) {
+            if (vv[indirect_index*offset+i] == v3) {
                 logged = true;
                 break;
             }
         }
         if (!logged) {
-            unsigned long long int new_idx = atomicAdd(&index[cell_vertex],1);
-            vv[cell_vertex*offset+new_idx] = v3;
+            unsigned long long int new_idx = atomicAdd(&index[indirect_index],1);
+            vv[indirect_index*offset+new_idx] = v3;
         }
     }
 }
@@ -1187,11 +1193,14 @@ device_VV * make_VV_GPU_return(const TV_Data & TV,
               << " should auto-exit (" << (thread_block_size.x * grid_size.x) - n_to_compute
               << ")" << std::endl;
     Timer kernel(false, "VV_Kernel");
+    std::cerr << "THIS FUNCTION DOES NOT HAVE UPDATED VVI KERNEL SPEC!" << std::endl;
+    exit(EXIT_FAILURE);
     KERNEL_WARN(VV_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
                             thread_block_size>>>(device_TV,
                                 n_cells,
                                 n_points,
                                 max_VV_guess,
+                                nullptr,
                                 vv_index,
                                 vv_computed));
     CUDA_WARN(cudaDeviceSynchronize());

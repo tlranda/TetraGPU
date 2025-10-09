@@ -128,6 +128,7 @@ __global__ void VV_kernel(const int * __restrict__ tv,
                           const int n_cells,
                           const int n_points,
                           const int offset,
+                          const vtkIdType * __restrict__ vvi,
                           unsigned int * __restrict__ index,
                           int * __restrict__ vv);
 
