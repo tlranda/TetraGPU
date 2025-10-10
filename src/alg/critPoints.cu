@@ -629,7 +629,7 @@ void * parallel_work(void *parallel_arguments) {
     int max_in_partition = 0;
     std::vector<std::pair<int, int>> partition_metadata;
     //for (int partition_idx = my_partition_id; partition_idx < TV->n_partitions; partition_idx += n_parallel)
-    for (int partition_idx : {0 /*46,10*/}) // Analyze ONLY the listed partitions!
+    for (int partition_idx : {0,1,2 /*46,10*/}) // Analyze ONLY the listed partitions!
     {
         partition_metadata.emplace_back(std::pair<int, int>(TV->n_per_partition[partition_idx], partition_idx));
     }
@@ -931,6 +931,7 @@ void * parallel_work(void *parallel_arguments) {
                                     TV_local->nPoints,
                                     max_VV_local,
                                     dev_vvi,
+                                    dev_ivvi,
                                     vv_index,
                                     vv_computed));
         // Only synchronized to ensure VV kernel duration is appropriately tracked
@@ -939,11 +940,12 @@ void * parallel_work(void *parallel_arguments) {
         sprintf(intervalname, "%s VV kernel duration", timername);
         vvKernel.label_prev_interval(intervalname);
         // DEBUG: Check that every point in VV is properly found
-        ///*
+        /*
+        // NOT COMPATIBLE WITH 2OT INDEXING
         full_check_VV_Host(vv_size, vv_index_size, tv_flat_size, max_VV_local,
                            TV_local->nPoints, TV_local->nCells, vv_computed,
                            vv_index, device_tv, thread_stream);
-        //*/
+        */
         // NOTE: Asynchronous WRT CPU, we can continue to setup SFCP kernel while VV runs
 
         // Additional allocations and settings for SFCP kernel

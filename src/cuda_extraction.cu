@@ -970,6 +970,7 @@ __global__ void VV_kernel(const int * __restrict__ tv,
                           const int n_points,
                           const int offset,
                           const vtkIdType * __restrict__ vvi,
+                          const vtkIdType * __restrict__ ivvi,
                           unsigned int * __restrict__ index,
                           int * __restrict__ vv) {
     int tid = (blockDim.x * blockIdx.x) + threadIdx.x;
@@ -978,7 +979,7 @@ __global__ void VV_kernel(const int * __restrict__ tv,
     // Mark yourself as adjacent to other cells alongside you
     int cell_vertex = tv[tid], v0, v1, v2, v3;
     // IF INDIRECTED, look up your OWN cell_vertex's indirect value
-    int indirect_index = vvi[tid];
+    int indirect_index = ivvi[cell_vertex];
 
     // Use register exchanges within a warp to get all other values
     v0 = __shfl_sync(0xffffffff, cell_vertex, 0, 4);
@@ -1141,7 +1142,8 @@ int get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points, const int de
     // vertex is the center-point of a "sphere" of cells which each have 3
     // unique vertices forming the rest of the cell, so 3*MAX(appear) is our
     // upper bound
-    int *appears = new int[n_points]();
+    int *appears = (int*)malloc(n_points*sizeof(int));
+    bzero(appears, sizeof(int)*n_points);
     int max = 0;
     std::for_each(TV.begin(), TV.end(),
             [&](const std::array<vtkIdType,nbVertsInCell> cell) {
@@ -1154,7 +1156,7 @@ int get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points, const int de
     // Minimum warp width for help with consistency
     // TODO: Possibly round this UP to a multiple of 32 for threadblock alignment nice-ness
     max = ((max+31)/32)*32;
-    delete[] appears;
+    free(appears);
     if (debug > NO_DEBUG)
         std::cerr << INFO_EMOJI << "Approximated max " YELLOW_COLOR "VV"
                      RESET_COLOR " adjacency: " << max << std::endl;
@@ -1200,6 +1202,7 @@ device_VV * make_VV_GPU_return(const TV_Data & TV,
                                 n_cells,
                                 n_points,
                                 max_VV_guess,
+                                nullptr,
                                 nullptr,
                                 vv_index,
                                 vv_computed));
