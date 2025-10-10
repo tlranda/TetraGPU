@@ -21,12 +21,14 @@ __global__ void dummy_kernel(void) {
 #define REGULAR_CLASS 3
 #define SADDLE_CLASS  4
 
+///*
 #define TID_SELECTION (blockDim.x * blockIdx.x) + threadIdx.x
 #define PRINT_ON 0
 #define CONSTRAIN_BLOCK 0
+//*/
 // Debugging specific block executions
 /*
-#define FORCED_BLOCK_IDX 3183
+#define FORCED_BLOCK_IDX 0
 #define TID_SELECTION (blockDim.x * FORCED_BLOCK_IDX) + threadIdx.x
 #define PRINT_ON 1
 #define CONSTRAIN_BLOCK 1
@@ -175,16 +177,12 @@ __global__ void critPoints(const int * __restrict__ VV,
                     */
                     const int theirNeighborhood = neighborhood[i-min_my_1d];
                     if (VV[j] == my_2d && neighborhood[threadIdx.x] > theirNeighborhood) {
+                        #if PRINT_ON
+                        printf("Block %d Thread %02d neighborhood update %d --> %d\n",
+                                blockIdx.x, threadIdx.x, neighborhood[threadIdx.x], theirNeighborhood);
+                        #endif
                         neighborhood[threadIdx.x] = theirNeighborhood;
                         atomicAdd(component_edits+((my_class+1)/2), 1);
-                        #ifdef PRINT_ON
-                        /*
-                        printf("Block %d Thread %02d Inspect %02d Shares component at VV[%d][%d] (%s)\n",
-                                blockIdx.x, threadIdx.x, inspect_step, candidate_component_2d,
-                                j-(candidate_component_2d*max_VV_guess),
-                                my_class == -1 ? "Upper" : "Lower");
-                        */
-                        #endif
                     }
                 }
             }
@@ -628,10 +626,15 @@ void * parallel_work(void *parallel_arguments) {
     }
     int max_in_partition = 0;
     std::vector<std::pair<int, int>> partition_metadata;
-    //for (int partition_idx = my_partition_id; partition_idx < TV->n_partitions; partition_idx += n_parallel)
-    for (int partition_idx : {0,1,2 /*46,10*/}) // Analyze ONLY the listed partitions!
-    {
-        partition_metadata.emplace_back(std::pair<int, int>(TV->n_per_partition[partition_idx], partition_idx));
+    if (_my_args.no_partitioning) {
+        partition_metadata.emplace_back(std::pair<int,int>(TV->n_per_partition[0], 0));
+    }
+    else {
+        //for (int partition_idx = my_partition_id; partition_idx < TV->n_partitions; partition_idx += n_parallel)
+        for (int partition_idx : {0,1,2 /*46,10*/}) // Analyze ONLY the listed partitions!
+        {
+            partition_metadata.emplace_back(std::pair<int, int>(TV->n_per_partition[partition_idx], partition_idx));
+        }
     }
     // Sort for traversal order (DESCENDING)
     std::sort(partition_metadata.rbegin(), partition_metadata.rend());
@@ -661,10 +664,12 @@ void * parallel_work(void *parallel_arguments) {
             max_VV_local = get_approx_max_VV(*TV_local, TV_local->nPoints, _my_args.debug);
             // Ensure partitioning data is set correctly
             TV_local->n_partitions = 1;
-            int * local_partitionIDs = new int[TV_local->nPoints];
+            TV_local->partitionIDs = new int[TV_local->nPoints];
             // Cannot new-initialize with non-default value, but need default = 1
-            memset(local_partitionIDs, 1, TV_local->nPoints);
-            TV_local->partitionIDs = local_partitionIDs;
+            for (int i = 0; i < TV_local->nPoints; i++) {
+                TV_local->partitionIDs[i] = 1;
+            }
+            //memset(TV_local->partitionIDs, 1, TV_local->nPoints);
 
             // VVI & IVVI
             bzero(dense_ivvi_host, TV->nPoints);
@@ -940,12 +945,12 @@ void * parallel_work(void *parallel_arguments) {
         sprintf(intervalname, "%s VV kernel duration", timername);
         vvKernel.label_prev_interval(intervalname);
         // DEBUG: Check that every point in VV is properly found
-        /*
+        ///*
         // NOT COMPATIBLE WITH 2OT INDEXING
         full_check_VV_Host(vv_size, vv_index_size, tv_flat_size, max_VV_local,
                            TV_local->nPoints, TV_local->nCells, vv_computed,
                            vv_index, device_tv, thread_stream);
-        */
+        //*/
         // NOTE: Asynchronous WRT CPU, we can continue to setup SFCP kernel while VV runs
 
         // Additional allocations and settings for SFCP kernel
@@ -1092,6 +1097,9 @@ void * parallel_work(void *parallel_arguments) {
             }
         }
         timer.tick_announce();
+        if (!_my_args.no_partitioning) {
+            delete TV_local;
+        }
     }
     // Free allocated memory
     sprintf(intervalname, "%s Free memory", timername);
@@ -1100,7 +1108,9 @@ void * parallel_work(void *parallel_arguments) {
     if (dense_ivvi_host != nullptr) CUDA_WARN(cudaFreeHost(dense_ivvi_host));
     if (sparse_vvi != nullptr) CUDA_WARN(cudaFreeHost(sparse_vvi));
     if (dev_vvi != nullptr) CUDA_WARN(cudaFree(dev_vvi));
-    if (dev_ivvi != nullptr) CUDA_WARN(cudaFree(dev_ivvi));
+    // NOTE: No partitioning makes these pointers identical! But we don't want double-free!
+    if (!_my_args.no_partitioning)
+        if (dev_ivvi != nullptr) CUDA_WARN(cudaFree(dev_ivvi));
     if (host_flat_tv != nullptr) CUDA_WARN(cudaFreeHost(host_flat_tv));
     if (device_tv != nullptr) CUDA_WARN(cudaFree(device_tv));
     if (partition != nullptr) CUDA_WARN(cudaFree(partition));
