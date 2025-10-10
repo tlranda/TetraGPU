@@ -88,10 +88,15 @@ if [ $? -ne 0 ]; then
     exit;
 fi
 
-cd ${build_dir} && make VERBOSE=1;
-if [[ $? -ne 0 && "${RUNTIME_ARGS}" == "" ]]; then
-    echo "Make return $?";
-    exit $?;
+cd ${build_dir};
+# I am not sure why the $? bash thing doesn't work with Make despite the || operator working, but failing builds should NOT run
+mreturn=0;
+make VERBOSE=1 || mreturn=1;
+if [[ ${mreturn} -ne 0 ]]; then
+    echo "Make failed";
+    exit ${mreturn};
+else
+    echo "Make OK";
 fi
 if [[ "${compile_only}" != "0" ]]; then
     exit 0;
