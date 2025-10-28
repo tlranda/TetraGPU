@@ -49,7 +49,7 @@ std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
                                      const vtkIdType n_faces,
                                      const vtkIdType n_cells,
                                      const bool free_transients);
-__global__ void TF_kernel(const int * __restrict__ tv,
+__global__ void TF_kernel(const vtkIdType * __restrict__ tv,
                           const vtkIdType * __restrict__ vertices,
                           const vtkIdType * __restrict__ faces,
                           const vtkIdType * __restrict__ first_faces,
@@ -78,7 +78,7 @@ __device__ void te_combine(vtkIdType quad0, vtkIdType quad1,
                            const vtkIdType * __restrict__ edges,
                            const vtkIdType n_points,
                            const vtkIdType * __restrict__ index);
-__global__ void TE_kernel(const int * __restrict__ tv,
+__global__ void TE_kernel(const vtkIdType * __restrict__ tv,
                           const vtkIdType * __restrict__ vertices,
                           const vtkIdType * __restrict__ edges,
                           const vtkIdType * __restrict__ first_index,
@@ -114,6 +114,7 @@ std::unique_ptr<FE_Data> make_FE_GPU(const VF_Data & VF,
                                      const bool free_transients);
 // No kernel yet -- To be implemented
 // VV = TV' x TV
+int get_approx_max_VV_partitioned(const TV_Data & TV, const vtkIdType n_points, const vtkIdType * ivvi, const int debug);
 int get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points, const int debug);
 device_VV * make_VV_GPU_return(const TV_Data & TV,
                                const int n_cells,
@@ -124,7 +125,7 @@ std::unique_ptr<VV_Data> make_VV_GPU(const TV_Data & TV,
                                      const int n_cells,
                                      const int n_points,
                                      const bool free_transients);
-__global__ void VV_kernel(const int * __restrict__ tv,
+__global__ void VV_kernel(const vtkIdType * __restrict__ tv,
                           const int n_cells,
                           const int n_points,
                           const int offset,

@@ -39,8 +39,8 @@ vtkIdType make_TE_and_VE(const TV_Data & tv_relationship,
             for(int k = j + 1; k <= nbVertsInCell - 1; k++) {
                 // edge processing
                 // enforce lower vertex id as first element
-                vtkIdType v0 = tv_relationship.cells[cid][j], //[(4*cid)+j],
-                          v1 = tv_relationship.cells[cid][k]; //[(4*cid)+k];
+                vtkIdType v0 = tv_relationship.cells[(cid*nbVertsInCell)+j],
+                          v1 = tv_relationship.cells[(cid*nbVertsInCell)+k];
                 if(v0 > v1) std::swap(v0, v1);
                 // We will store edges incident to lower vertex here
                 std::vector<EdgeData> &vec = edgeTable[v0];
@@ -71,8 +71,8 @@ vtkIdType make_VE(const TV_Data & tv_relationship, VE_Data & edgeTable) {
             for(int k = j + 1; k <= nbVertsInCell - 1; k++) {
                 // edge processing
                 // enforce lower vertex id as first element
-                vtkIdType v0 = tv_relationship.cells[cid][j], //[(4*cid)+j],
-                          v1 = tv_relationship.cells[cid][k]; //[(4*cid)+k];
+                vtkIdType v0 = tv_relationship.cells[(cid*nbVertsInCell)+j],
+                          v1 = tv_relationship.cells[(cid*nbVertsInCell)+k];
                 if(v0 > v1) std::swap(v0, v1);
                 // We will store edges incident to lower vertex here
                 std::vector<EdgeData> &vec = edgeTable[v0];
@@ -127,8 +127,12 @@ vtkIdType make_TF_and_VF(const TV_Data & tv_relationship,
     // SIMULTANEOUSLY define TF and VF
     for (vtkIdType cid = 0; cid < tv_relationship.nCells; cid++) {
         // Use copy constructor to permit function-local mutation
-        std::array<vtkIdType,nbVertsInCell> cellVertices(tv_relationship.cells[cid]);
-        std::sort(cellVertices.begin(), cellVertices.end());
+        std::array<vtkIdType,nbVertsInCell> cellVertices({
+                tv_relationship.cells[(cid*nbVertsInCell)+0],
+                tv_relationship.cells[(cid*nbVertsInCell)+1],
+                tv_relationship.cells[(cid*nbVertsInCell)+2],
+                tv_relationship.cells[(cid*nbVertsInCell)+3],
+                });
         // face IDs can be given based on ascending vertex sums
         // given a SORTED list of vertex IDs, ascending order of vertex sums is:
         // v[[0,1,2]], v[[0,1,3]], v[[0,2,3]], v[[1,2,3]]
@@ -174,8 +178,12 @@ vtkIdType make_VF(const TV_Data & tv_relationship,
     vtkIdType faceCount = 0;
     for (vtkIdType cid = 0; cid < tv_relationship.nCells; cid++) {
         // Use copy constructor to permit function-local mutation
-        std::array<vtkIdType,nbVertsInCell> cellVertices(tv_relationship.cells[cid]);
-        std::sort(cellVertices.begin(), cellVertices.end());
+        std::array<vtkIdType,nbVertsInCell> cellVertices({
+                tv_relationship.cells[(cid*nbVertsInCell)+0],
+                tv_relationship.cells[(cid*nbVertsInCell)+1],
+                tv_relationship.cells[(cid*nbVertsInCell)+2],
+                tv_relationship.cells[(cid*nbVertsInCell)+3],
+                });
         // face IDs can be given based on ascending vertex sums
         // given a SORTED list of vertex IDs, ascending order of vertex sums is:
         // v[[0,1,2]], v[[0,1,3]], v[[0,2,3]], v[[1,2,3]]
@@ -254,24 +262,22 @@ std::unique_ptr<VV_Data> elective_make_VV(const TV_Data & TV,
     // Vertices are adjacent to all other vertices in a cell they appear in
     // This is a once-over pass, just don't double-enter the data (common edge
     // or common face would lead to duplicates)
-    std::for_each(TV.begin(), TV.end(),
-            [&](const std::array<vtkIdType,nbVertsInCell>& cell) {
-                // One-loop to make adjacencies for each vertex in the cell
-                for (const vtkIdType src_vertex : cell) {
-                    // Double-loop to get adjacent to src vertex within THIS cell
-                    for (const vtkIdType v : cell) {
-                        if (v == src_vertex) continue;
-                        auto index = std::find(begin((*adjacencies)[src_vertex]),
-                                               end((*adjacencies)[src_vertex]),
-                                               v);
-                        if (index == std::end((*adjacencies)[src_vertex])) {
-                            // New adjacency
-                            (*adjacencies)[src_vertex].emplace_back(v);
-                        }
-                        // else old adjacency from another cell; skip
-                    }
+    for (vtkIdType cell = 0; cell < TV.nCells; cell++) {
+        for (vtkIdType i = 0; i < nbVertsInCell; i++) {
+            vtkIdType src_vertex = TV.cells[(cell*nbVertsInCell)+i];
+            for (vtkIdType j = 0; j < nbVertsInCell; j++) {
+                if (i == j) continue;
+                vtkIdType dst_vertex = TV.cells[(cell*nbVertsInCell)+j];
+                auto index = std::find(begin((*adjacencies)[src_vertex]),
+                                       end((*adjacencies)[src_vertex]),
+                                       dst_vertex);
+                if (index == std::end((*adjacencies)[src_vertex])) {
+                    // New adjacency
+                    (*adjacencies)[src_vertex].emplace_back(dst_vertex);
                 }
-            });
+            }
+        }
+    }
     // Possible global information: longest adjacency?
     unsigned long long longest_adjacency = 0;
     for (const std::vector<vtkIdType>& list : (*adjacencies)) {
@@ -288,8 +294,14 @@ std::unique_ptr<VT_Data> elective_make_VT(const TV_Data & tv) {
     // VTK load should ensure this processing IS sorted and evidently it will
     // be unique as well (no known counterexamples yet)
     vtkIdType tid = 0;
-    std::for_each(tv.begin(), tv.end(),
-        [&](const std::array<vtkIdType,nbVertsInCell> cell_contents) {
+
+    for (vtkIdType cell = 0; cell < tv.nCells; cell++) {
+        std::array<vtkIdType,nbVertsInCell> cell_contents({
+                tv.cells[(cell*nbVertsInCell)+0],
+                tv.cells[(cell*nbVertsInCell)+1],
+                tv.cells[(cell*nbVertsInCell)+2],
+                tv.cells[(cell*nbVertsInCell)+3]
+                });
         std::for_each(cell_contents.begin(), cell_contents.end(),
                 [&](const vtkIdType vertex) {
                     // Uniqueness check
@@ -299,7 +311,8 @@ std::unique_ptr<VT_Data> elective_make_VT(const TV_Data & tv) {
                     //}
                 });
         tid++;
-        });
+    }
+
     // If sorting fails / we want to be paranoid, you would:
     /*
     std::for_each(vt->begin(), vt->end(),

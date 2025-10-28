@@ -106,15 +106,11 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
     // If VTK data is constructed orderly, which I observed, this means offsets
     // are always 4*index, ie offsets[0] = 0, offsets[1] = 4, offsets[4] = 16
 
-    // Transfer into simpler data structure with unique ownership
-    // We preserve the locality provided by the input, which means we assume
-    // that adjacent cellIDs are close on the mesh and that their vertex IDs
-    // are ordered to promote spatial locality between neighbor cells
     std::shared_ptr<TV_Data> data = std::make_shared<TV_Data>(nPoints, nCells);
     //#pragma omp parallel for num_threads(args.threadNumber)
     for (vtkIdType cellIndex = 0; cellIndex < nCells; cellIndex++) {
-        std::array<vtkIdType,4> cell_vertices{
-            connectivity[offsets[cellIndex]],
+        std::array<vtkIdType,nbVertsInCell> cell_vertices{
+            connectivity[offsets[cellIndex]+0],
             connectivity[offsets[cellIndex]+1],
             connectivity[offsets[cellIndex]+2],
             connectivity[offsets[cellIndex]+3]};
@@ -123,8 +119,8 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
         std::sort(cell_vertices.begin(), cell_vertices.end());
         // Because std::arrays are stack-allocated OVERRIDE the memory do not
         // replace it with memory from this frame
-        for (int vertexIndex = 0; vertexIndex < 4; vertexIndex++) {
-            data->cells[cellIndex][vertexIndex] = cell_vertices[vertexIndex];
+        for (int vertexIndex = 0; vertexIndex < nbVertsInCell; vertexIndex++) {
+            data->cells[(cellIndex*nbVertsInCell)+vertexIndex] = cell_vertices[vertexIndex];
         }
     }
 

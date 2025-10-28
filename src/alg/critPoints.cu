@@ -21,14 +21,14 @@ __global__ void dummy_kernel(void) {
 #define REGULAR_CLASS 3
 #define SADDLE_CLASS  4
 
-///*
+//*
 #define TID_SELECTION (blockDim.x * blockIdx.x) + threadIdx.x
 #define PRINT_ON 0
 #define CONSTRAIN_BLOCK 0
-//*/
+//* /
 // Debugging specific block executions
 /*
-#define FORCED_BLOCK_IDX 0
+#define FORCED_BLOCK_IDX 30
 #define TID_SELECTION (blockDim.x * FORCED_BLOCK_IDX) + threadIdx.x
 #define PRINT_ON 1
 #define CONSTRAIN_BLOCK 1
@@ -46,6 +46,18 @@ __global__ void critPoints(const int * __restrict__ VV,
                            const vtkIdType * __restrict__ ivvi,
                            unsigned int * __restrict__ classes) {
     extern __shared__ unsigned int block_shared[];
+    /*
+      vv_computed,          // NON-localized IDs, localized size
+      vv_index,             // Localized size
+      device_valences,      // Localized size
+      TV_local->nPoints,
+      max_VV_local,
+      device_scalar_values, // Localized size
+      partition,            // Localized size
+      dev_vvi,              // Localized size
+      dev_ivvi,             // GLOBAL SIZE
+      device_CPCs;          // Localized size
+    */
 
     unsigned int *component_edits = &block_shared[0],
                  *upper_edits = &block_shared[0],
@@ -57,13 +69,14 @@ __global__ void critPoints(const int * __restrict__ VV,
            available or if a prefix-scan of your primary-dimension list shows
            that you are a duplicate)
     */
-    // IF INDIRECTED, this gives LOCAL index, but need to ping indirection array
-    // for what my_1d's actual vertex \# is in algorithm
-    const int my_1d = tid / max_VV_guess,
-              my_2d = VV[tid], // Value written in VV is NOT NECESSARY TO TRANSLATE
-              indirect_my_1d = vvi[tid / max_VV_guess];
+    // my_1d & my_2d are the dense indices
+    // indirect_my_1d & indirect_my_2d are sparsified for structures that are shrunk by partition-limitations
+    const int indirect_my_1d = tid / max_VV_guess,
+              my_1d = vvi[indirect_my_1d],
+              my_2d = VV[tid],
+              indirect_my_2d = ivvi[my_2d];
     // No work for this point's valence or out of partition
-    if (VV_index[my_1d] <= 0 || my_2d < 0 || partition[my_1d] == 0) {
+    if (VV_index[indirect_my_1d] <= 0 || my_2d < 0 || partition[indirect_my_1d] == 0) {
         #if PRINT_ON
         /*
         printf("Block %d Thread %02d exits due to partitioning or OOB data\n",
@@ -73,7 +86,7 @@ __global__ void critPoints(const int * __restrict__ VV,
         return;
     }
     // Prefix scan as anti-duplication
-    for (int i = my_1d * max_VV_guess; i < tid; i++) {
+    for (int i = indirect_my_1d * max_VV_guess; i < tid; i++) {
         if (VV[i] == my_2d) {
             #if PRINT_ON
             /*
@@ -89,7 +102,7 @@ __global__ void critPoints(const int * __restrict__ VV,
     #if PRINT_ON
     // Not every thread needs to print this out, but every thread should have the same value
     printf("Block %d Thread %02d remains to participate in computation (VV_index=%d)\n",
-           blockIdx.x, threadIdx.x, VV_index[my_1d]);
+           blockIdx.x, threadIdx.x, VV_index[indirect_my_1d]);
     #endif
 
     /*
@@ -101,19 +114,19 @@ __global__ void critPoints(const int * __restrict__ VV,
     // my_2d is {Upper = -1, Lower = 1} relative to my_1d
     // For parity with Paraview, a tie needs to be broken by lower vertex ID being "lower" than the other one
     const int my_class = 1 - (
-                          (scalar_values[my_2d] == scalar_values[my_1d] ?
-                                my_2d < indirect_my_1d : // IF INDIRECTED: USE INDIRECTED VALUE RATHER THAN my_1d HERE ONLY
-                                scalar_values[my_2d] < scalar_values[my_1d])
+                          (scalar_values[indirect_my_2d] == scalar_values[indirect_my_1d] ?
+                                my_2d < my_1d :
+                                scalar_values[indirect_my_2d] < scalar_values[indirect_my_1d])
                            << 1);
     valences[tid] = my_class;
-    const int min_my_1d = (my_1d * max_VV_guess),
-              max_my_1d = min_my_1d + VV_index[my_1d];
+    const int min_my_1d = (indirect_my_1d * max_VV_guess),
+              max_my_1d = min_my_1d + VV_index[indirect_my_1d];
     neighborhood[threadIdx.x] = my_2d; // Initialize neighborhood with YOURSELF
     __syncthreads();
     #if PRINT_ON
     printf("Block %d Thread %02d B init on my_1d %d and my_2d %d with valence %d based on %lf (block) vs %lf (thread)\n",
            blockIdx.x, threadIdx.x, my_1d, my_2d, my_class,
-           scalar_values[my_1d], scalar_values[my_2d]);
+           scalar_values[indirect_my_1d], scalar_values[indirect_my_2d]);
     #endif
     /*
         3) For all other threads sharing your neighborhood classification, scan
@@ -161,16 +174,20 @@ __global__ void critPoints(const int * __restrict__ VV,
         // Union-Find iteration
         for(int i = min_my_1d; i < max_my_1d; i++) {
             // Found same valence
-            // WHEN INDIRECTED, VV HAS GROUND-TRUTH, NO EXTRA LOOKUPS
             const int candidate_component_2d = VV[i],
-                      indirect_candidate_component_2d = vvi[VV[i]];
+                      indirect_candidate_component_2d = ivvi[candidate_component_2d];
             if (i != tid && valences[i] == my_class) {
                 // Find yourself in their adjacency to become a shared component and release shmem write burden
-                // HOWEVER, THEY MAY NOT BE LOCATED HERE! WHEN INDIRECTED, YOU NEED THE INDIRECT INDEX OF VV[i] as the multiplier to look into VV
-                // HAVE TO LINEAR-SCAN VVI AND COUNT WHERE YOU LEAVE OFF OR HAVE A SECOND, DENSE VVI THAT LOGS THE LOCATION
                 const int start_2d = indirect_candidate_component_2d*max_VV_guess,
-                          // SAME GOES HERE: VV_index[IVVI[i]];
                           stop_2d  = start_2d + VV_index[indirect_candidate_component_2d];
+                #if PRINT_ON
+                if (start_2d > blockDim.x * gridDim.x) {
+                    /*
+                    printf("Block %d Thread %02d has bad iterator from %d to %d based on direct %d and indirect %d at iteration %d\n",
+                            blockIdx.x, threadIdx.x, start_2d, stop_2d, candidate_component_2d, indirect_candidate_component_2d, i);
+                    */
+                }
+                #endif
                 for(int j = start_2d; j < stop_2d; j++) {
                     /* Do you see your 2d in their 2d? If so, update your
                        neighborhood with the minimum of your two points
@@ -194,7 +211,7 @@ __global__ void critPoints(const int * __restrict__ VV,
     // End all Union-Finds
 
     if (neighborhood[threadIdx.x] == my_2d) { // You are the root of a component!
-        const int memoffset = ((my_1d*3)+((my_class+1)/2));
+        const int memoffset = ((indirect_my_1d*3)+((my_class+1)/2));
         const unsigned int old = atomicAdd(classes+memoffset,1);
         #if PRINT_ON
         printf("Block %d Thread %02d Writes %s component @ mem offset %d (old: %u)\n",
@@ -211,7 +228,7 @@ __global__ void critPoints(const int * __restrict__ VV,
     */
     // Limit classification to lowest-ranked thread for single write
     if (threadIdx.x == 0) {
-        const int my_classes = my_1d*3;
+        const int my_classes = indirect_my_1d*3;
         const unsigned int upper = classes[my_classes],
                            lower = classes[my_classes+1];
         #if PRINT_ON
@@ -314,12 +331,10 @@ void export_classes(unsigned int * classes,
             n_insane[partition_id]++;
         }
         // Output formats
-        if (args.debug > NO_DEBUG)
-            out << "A Class " << i << " = " << my_class << std::endl;
-        /*
-        out << "A Class " << i << " = " << class_names[my_class] << "(Upper: "
-            << n_upper << ", Lower: " << n_lower << ")" << std::endl;
-        */
+        if (args.debug > NO_DEBUG && my_class > 0)
+            /* out << "A Class " << i << " = " << my_class / * class_names[my_class] * /
+                / * << "(Upper: " << n_upper << ", Lower: " << n_lower << ")" * /
+                << std::endl; */
         if (my_class == MAXIMUM_CLASS) {
             n_max[partition_id]++;
             //out << "Point " << i << " in partition " << partition_id << " is a MAXIMUM" << std::endl;
@@ -367,38 +382,56 @@ void export_classes(unsigned int * classes,
     }
 }
 
-void full_check_VV_Host(const size_t vv_size, const size_t vv_index_size, const size_t tv_size,
-                        const int max_VV_local, const vtkIdType points, const vtkIdType cells,
-                        const int * device_vv, const unsigned int * device_vv_index,
-                        const int * device_localized_tv, cudaStream_t stream) {
-    // Host copy of TV-flat
-    int * host_flat_tv = nullptr;
+void full_check_VV_Host(const size_t vv_size, const size_t vv_index_size,
+                        const size_t vvi_size, const size_t ivvi_size,
+                        const size_t tv_size,
+                        const int max_VV_local, const vtkIdType points,
+                        const vtkIdType cells,
+                        const int * device_vv,
+                        const unsigned int * device_vv_index,
+                        const vtkIdType * dev_vvi,
+                        const vtkIdType * dev_ivvi,
+                        const vtkIdType * device_localized_tv,
+                        cudaStream_t stream) {
+    // Host copy of TV-flat as rendered on device
+    vtkIdType * host_flat_tv = nullptr;
     CUDA_ASSERT(cudaMallocHost((void**)&host_flat_tv, tv_size));
-    CUDA_WARN(cudaMemcpyAsync(host_flat_tv, device_localized_tv, tv_size, cudaMemcpyDeviceToHost, stream));
+    CUDA_WARN(cudaMemcpyAsync(host_flat_tv, device_localized_tv, tv_size,
+                              cudaMemcpyDeviceToHost, stream));
     // Host copy of VV data
     int * host_vv = nullptr;
     CUDA_ASSERT(cudaMallocHost((void**)&host_vv, vv_size));
-    CUDA_WARN(cudaMemcpyAsync(host_vv, device_vv, vv_size, cudaMemcpyDeviceToHost, stream));
+    CUDA_WARN(cudaMemcpyAsync(host_vv, device_vv, vv_size,
+                              cudaMemcpyDeviceToHost, stream));
     unsigned int * host_vv_index = nullptr;
     CUDA_ASSERT(cudaMallocHost((void**)&host_vv_index, vv_index_size));
-    CUDA_WARN(cudaMemcpyAsync(host_vv_index, device_vv_index, vv_index_size, cudaMemcpyDeviceToHost, stream));
+    CUDA_WARN(cudaMemcpyAsync(host_vv_index, device_vv_index, vv_index_size,
+                              cudaMemcpyDeviceToHost, stream));
+    vtkIdType * host_vvi = nullptr,
+              * host_ivvi = nullptr;
+    CUDA_ASSERT(cudaMallocHost((void**)&host_vvi, vvi_size));
+    CUDA_WARN(cudaMemcpyAsync(host_vvi, dev_vvi, vvi_size,
+                              cudaMemcpyDeviceToHost, stream));
+    CUDA_ASSERT(cudaMallocHost((void**)&host_ivvi, ivvi_size));
+    CUDA_WARN(cudaMemcpyAsync(host_ivvi, dev_ivvi, ivvi_size,
+                              cudaMemcpyDeviceToHost, stream));
     CUDA_WARN(cudaStreamSynchronize(stream));
 
     // Rigorously test to find all combinations using CPU
     for (vtkIdType i = 0; i < cells; i++) {
-        int tv_cell[4] = { host_flat_tv[(i*4)+0],
-                           host_flat_tv[(i*4)+1],
-                           host_flat_tv[(i*4)+2],
-                           host_flat_tv[(i*4)+3] };
+        vtkIdType tv_cell[4] = { host_flat_tv[(i*4)+0],
+                                 host_flat_tv[(i*4)+1],
+                                 host_flat_tv[(i*4)+2],
+                                 host_flat_tv[(i*4)+3] };
         for (int idx = 0; idx < 4; idx++) {
-            int look_match = tv_cell[idx];
+            vtkIdType look_match = host_ivvi[tv_cell[idx]];
             unsigned int max_index = host_vv_index[look_match],
                          base_index = look_match*max_VV_local;
 
             for (int idx2 = 0; idx2 < 4; idx2++) {
                 if (idx2 == idx) continue;
 
-                int look_for = tv_cell[idx2];
+                vtkIdType look_for = tv_cell[idx2];
                 bool found = false;
                 for (unsigned int vv_index = 0; vv_index < max_index; vv_index++) {
                     if (host_vv[base_index+vv_index] == look_for) {
@@ -407,7 +440,7 @@ void full_check_VV_Host(const size_t vv_size, const size_t vv_index_size, const 
                 }
                 if (!found) {
                     std::cerr << EXCLAIM_EMOJI <<  "Failed to locate edge for cell "
-                              << i << ": (" << look_match << ", " << look_for
+                              << i << ": (" << look_match << " -> " << look_for
                               << ")" << std::endl;
                     exit(EXIT_FAILURE);
                 }
@@ -437,6 +470,8 @@ void full_check_VV_Host(const size_t vv_size, const size_t vv_index_size, const 
     CUDA_WARN(cudaFreeHost(host_flat_tv));
     CUDA_WARN(cudaFreeHost(host_vv));
     CUDA_WARN(cudaFreeHost(host_vv_index));
+    CUDA_WARN(cudaFreeHost(host_vvi));
+    CUDA_WARN(cudaFreeHost(host_ivvi));
 }
 
 void gale_check_VV_Host(size_t vv_size, size_t vv_index_size, int max_VV_local,
@@ -599,10 +634,10 @@ void * parallel_work(void *parallel_arguments) {
               max_allocated_SFCP_VV = 0,
               max_allocated_SFCP_points = 0;
     int * host_flat_tv = nullptr,
-        * device_tv = nullptr,
         * partition = nullptr,
         * vv_computed = nullptr,
         * device_valences = nullptr;
+    vtkIdType * device_tv = nullptr;
     unsigned int * vv_index = nullptr,
                  * host_CPCs = nullptr,
                  * device_CPCs = nullptr;
@@ -613,6 +648,8 @@ void * parallel_work(void *parallel_arguments) {
     vtkIdType * dense_ivvi_host;
     size_t dense_cpc_size = (3*TV->nPoints)*sizeof(unsigned int),
            dense_ivvi_size = (TV->nPoints)*sizeof(vtkIdType);
+    std::cout << "Set dense CPC size for " << TV->nPoints << " points (3 classes per point, " << 3*TV->nPoints << " entries)" << std::endl;
+    std::cout << "Set dense IVVI size for " << TV->nPoints << " points" << std::endl;
     CUDA_ASSERT(cudaMallocHost((void**)&dense_CPCs, dense_cpc_size));
     bzero(dense_CPCs, 3*TV->nPoints);
     CUDA_ASSERT(cudaMallocHost((void**)&dense_ivvi_host, dense_ivvi_size));
@@ -631,7 +668,7 @@ void * parallel_work(void *parallel_arguments) {
     }
     else {
         //for (int partition_idx = my_partition_id; partition_idx < TV->n_partitions; partition_idx += n_parallel)
-        for (int partition_idx : {0,1,2 /*46,10*/}) // Analyze ONLY the listed partitions!
+        for (int partition_idx : {46 /*2,46,10*/}) // Analyze ONLY the listed partitions!
         {
             partition_metadata.emplace_back(std::pair<int, int>(TV->n_per_partition[partition_idx], partition_idx));
         }
@@ -678,6 +715,7 @@ void * parallel_work(void *parallel_arguments) {
             }
             // sparse_vvi == dense_ivvi due to identity!
             vvi_size = dense_ivvi_size;
+            std::cout << "No partitioning, VVI size == IVVI size -- both arrays are identity!" << std::endl;
         }
         else {
             Timer TV_LOCALIZATION(true, "TV Localization");
@@ -685,25 +723,30 @@ void * parallel_work(void *parallel_arguments) {
             TV_LOCALIZATION.tick();
             // START TV LOCALIZATION -- THIS TAKES A WHILE
             // Determine the number of points and cells
-            vtkIdType nth_tetra = 0, n_points = 0, n_cells = 0;
+            vtkIdType n_points = 0, n_cells = 0;
             std::vector<std::array<vtkIdType, nbVertsInCell>> cells;
             // First order inclusion: All points of any tetra with one or more vertices included in partition
             // MAYBE TODO: Parallelize this and then take union of sets before sorting with stable_vertices?
-            for (const auto & VertList : (*TV)) {
-                for (const vtkIdType vertex : VertList) {
+            for (vtkIdType cell = 0; cell < TV->nCells; cell++) {
+                vtkIdType i;
+                for (i = 0; i < nbVertsInCell; i++) {
+                    vtkIdType vertex = TV->cells[(cell*nbVertsInCell)+i];
                     if (TV->partitionIDs[vertex] == my_partition_id) {
-                        included_cells.emplace_back(nth_tetra);
-                        cells.emplace_back(VertList);
-
-                        // Include ALL vertices in this tetra in the partition
-                        for (const vtkIdType incl_vertex : VertList) {
-                            // Set object will not insert duplicates
-                            included_points.insert(incl_vertex);
-                        }
-                        break; // No need to continue iterating this tetra
+                        i += nbVertsInCell+1; // Sentinel value so we break AND know why
                     }
                 }
-                nth_tetra++;
+                if (i > nbVertsInCell) {
+                    included_cells.emplace_back(cell);
+                    cells.emplace_back(std::array<vtkIdType,nbVertsInCell>({
+                                TV->cells[(cell*nbVertsInCell)+0],
+                                TV->cells[(cell*nbVertsInCell)+1],
+                                TV->cells[(cell*nbVertsInCell)+2],
+                                TV->cells[(cell*nbVertsInCell)+3],
+                                }));
+                    for (vtkIdType j = 0; j < nbVertsInCell; j++) {
+                        included_points.insert(TV->cells[(cell*nbVertsInCell)+j]);
+                    }
+                }
             }
             TV_LOCALIZATION.tick_announce();
             TV_LOCALIZATION.label_next_interval("Point remapping");
@@ -779,7 +822,12 @@ void * parallel_work(void *parallel_arguments) {
             TV_LOCALIZATION.tick();
             TV_local = new TV_Data(n_points, n_cells);
             TV_local->n_partitions = 2; // You're in-partition or out-of-partition
-            TV_local->cells = std::move(cells);
+            nth_point = 0;
+            for (const auto VertList : cells) {
+                for (const vtkIdType vertex : VertList) {
+                    TV_local->cells[nth_point++] = vertex;
+                }
+            }
             TV_local->partitionIDs = partition_IDs;
             TV_local->vertexAttributes = localVertexAttributes;
             TV_LOCALIZATION.tick_announce();
@@ -788,7 +836,10 @@ void * parallel_work(void *parallel_arguments) {
             TV_LOCALIZATION.tick();
             // Hack: assume first measurement is sufficient for all subsequent partitions
             if (max_allocated_VV == 0) {
-                max_VV_local = get_approx_max_VV(*TV_local, n_points, _my_args.debug);
+                max_VV_local = get_approx_max_VV_partitioned(*TV_local,
+                                                             n_points,
+                                                             dense_ivvi_host,
+                                                             _my_args.debug);
             }
             else {
                 max_VV_local = max_allocated_VV;
@@ -828,7 +879,7 @@ void * parallel_work(void *parallel_arguments) {
         timer.label_next_interval(intervalname);
         timer.tick();
         // Subsize within allocation OR new required allocation size
-        size_t tv_flat_size = sizeof(int) * TV_local->nCells * nbVertsInCell,
+        size_t tv_flat_size = sizeof(vtkIdType) * TV_local->nCells * nbVertsInCell,
                vv_size = sizeof(int) * TV_local->nPoints * max_VV_local,
                partition_size = sizeof(int) * TV_local->nPoints,
                vv_index_size = sizeof(unsigned int) * TV_local->nPoints;
@@ -845,7 +896,8 @@ void * parallel_work(void *parallel_arguments) {
             CUDA_WARN(cudaStreamSynchronize(thread_stream));
             if (TV_local->nCells > max_allocated_cells) {
                 if (_my_args.debug > DEBUG_MIN) {
-                    out << WARN_EMOJI << timername << " Allocate (or reallocate) host and device TVs" << std::endl;
+                    out << WARN_EMOJI << timername << " Allocate (or reallocate) host and device TVs ("
+                        << TV_local->nCells << " cell allocation)" << std::endl;
                 }
                 if (device_tv != nullptr) CUDA_WARN(cudaFree(device_tv));
                 CUDA_ASSERT(cudaMalloc((void**)&device_tv, tv_flat_size));
@@ -855,7 +907,9 @@ void * parallel_work(void *parallel_arguments) {
             }
             if ((max_VV_local*TV_local->nPoints) > (max_allocated_VV*max_allocated_points)) {
                 if (_my_args.debug > DEBUG_MIN) {
-                    out << WARN_EMOJI << timername << " Allocate (or reallocate) vv_computed buffers" << std::endl;
+                    out << WARN_EMOJI << timername << " Allocate (or reallocate) vv_computed buffers ("
+                        << max_VV_local << " per-vertex with " << TV_local->nPoints
+                        << " vertices)" << std::endl;
                 }
                 if (vv_computed != nullptr) cudaFree(vv_computed);
                 CUDA_ASSERT(cudaMalloc((void**)&vv_computed, vv_size));
@@ -863,7 +917,8 @@ void * parallel_work(void *parallel_arguments) {
             }
             if (TV_local->nPoints > max_allocated_points) {
                 if (_my_args.debug > DEBUG_MIN) {
-                    out << WARN_EMOJI << timername << " Allocate (or reallocate) partition and vv_index buffers" << std::endl;
+                    out << WARN_EMOJI << timername << " Allocate (or reallocate) partition and vv_index buffers ("
+                        << TV_local->nPoints << " points)" << std::endl;
                 }
                 if (partition != nullptr) cudaFree(partition);
                 CUDA_ASSERT(cudaMalloc((void**)&partition, partition_size));
@@ -885,13 +940,8 @@ void * parallel_work(void *parallel_arguments) {
 
         // Set contiguous data in host memory -- separate scope to assist compiler
         {
-            int index = 0;
-            // TODO: Parallelize this
-            for (const auto & VertList : (*TV_local))
-                for (const vtkIdType vertex : VertList)
-                    host_flat_tv[index++] = vertex;
             // Device copies
-            CUDA_WARN(cudaMemcpyAsync(device_tv, host_flat_tv, tv_flat_size,
+            CUDA_WARN(cudaMemcpyAsync(device_tv, TV_local->cells, tv_flat_size,
                                       cudaMemcpyHostToDevice, thread_stream));
             CUDA_WARN(cudaMemsetAsync(vv_computed, -1, vv_size, thread_stream));
             CUDA_WARN(cudaMemsetAsync(vv_index, 0, vv_index_size, thread_stream));
@@ -945,12 +995,13 @@ void * parallel_work(void *parallel_arguments) {
         sprintf(intervalname, "%s VV kernel duration", timername);
         vvKernel.label_prev_interval(intervalname);
         // DEBUG: Check that every point in VV is properly found
-        ///*
+        //*
         // NOT COMPATIBLE WITH 2OT INDEXING
-        full_check_VV_Host(vv_size, vv_index_size, tv_flat_size, max_VV_local,
-                           TV_local->nPoints, TV_local->nCells, vv_computed,
-                           vv_index, device_tv, thread_stream);
-        //*/
+        full_check_VV_Host(vv_size, vv_index_size, vvi_size, dense_ivvi_size,
+                           tv_flat_size, max_VV_local, TV_local->nPoints,
+                           TV_local->nCells, vv_computed, vv_index, dev_vvi,
+                           dev_ivvi, device_tv, thread_stream);
+        //* /
         // NOTE: Asynchronous WRT CPU, we can continue to setup SFCP kernel while VV runs
 
         // Additional allocations and settings for SFCP kernel
@@ -1007,7 +1058,7 @@ void * parallel_work(void *parallel_arguments) {
         // More intended for GALE integration: checks more specifically
         //gale_check_VV_Host(vv_size, vv_index_size, max_VV_local, vv_computed, vv_index);
         // Detects errors but not very specifically
-        check_VV_errors(vv_size,vv_index_size, vv_computed, vv_index, TV_local,
+        check_VV_errors(vv_size, vv_index_size, vv_computed, vv_index, TV_local,
                         max_VV_local, thread_stream);
         timer.tick_announce();
         */
@@ -1043,16 +1094,16 @@ void * parallel_work(void *parallel_arguments) {
         KERNEL_WARN(critPoints<<<grid_size KERNEL_LAUNCH_SEPARATOR
                                  thread_block_size KERNEL_LAUNCH_SEPARATOR
                                  shared_mem_size KERNEL_LAUNCH_SEPARATOR
-                                 thread_stream>>>(vv_computed,
-                                                  vv_index,
-                                                  device_valences,
+                                 thread_stream>>>(vv_computed,          // NON-localized IDs, localized size
+                                                  vv_index,             // Localized size
+                                                  device_valences,      // Localized size
                                                   TV_local->nPoints,
                                                   max_VV_local,
-                                                  device_scalar_values,
-                                                  partition,
-                                                  dev_vvi,
-                                                  dev_ivvi,
-                                                  device_CPCs));
+                                                  device_scalar_values, // Localized size
+                                                  partition,            // Localized size
+                                                  dev_vvi,              // Localized size
+                                                  dev_ivvi,             // GLOBAL SIZE
+                                                  device_CPCs));        // Localized size
         CUDA_WARN(cudaStreamSynchronize(thread_stream)); // Make algorithm timing accurate
         sfcpKernel.tick();
         sprintf(intervalname, "%s SFCP kernel", timername);
@@ -1094,6 +1145,30 @@ void * parallel_work(void *parallel_arguments) {
                     << dense_CPCs[dense_basis+1] << ", "
                     << dense_CPCs[dense_basis+2] << ")" << std::endl;
                 */
+                vtkIdType _upper = dense_CPCs[dense_basis],
+                          _lower = dense_CPCs[dense_basis+1],
+                          _class = dense_CPCs[dense_basis+2],
+                          _expect = 0;
+                if (_upper >= 1 && _lower == 0) _expect = MINIMUM_CLASS;
+                else if (_upper == 0 && _lower >= 1) _expect = MAXIMUM_CLASS;
+                else if (_upper == 1 && _lower == 1) _expect = MAXIMUM_CLASS;
+                else if (_upper > 1 && _lower > 1) _expect = SADDLE_CLASS;
+                if (_class != _expect) {
+                    out << "Insanity at GPU partition " << my_partition_id
+                        << " For local point " << i << " (global id: "
+                        << inverse_partition_mapping[i] << ")" << std::endl;
+                    out << "\tUpper: " << _upper << ", Lower: " << _lower
+                        << ", Class: " << (_class == MINIMUM_CLASS ? "MINIMUM" :
+                                (_class == MAXIMUM_CLASS ? "MAXIMUM" :
+                                 (_class == REGULAR_CLASS ? "REGULAR" :
+                                  (_class == SADDLE_CLASS ? "SADDLE" :
+                                   "VOID"))))
+                        << " (should be: " << (_expect == MINIMUM_CLASS ? "MINIMUM" :
+                                    (_expect == MAXIMUM_CLASS ? "MAXIMUM" :
+                                     (_expect == REGULAR_CLASS ? "REGULAR" :
+                                      (_expect == SADDLE_CLASS ? "SADDLE" :
+                                       "VOID")))) << ")" << std::endl;
+                }
             }
         }
         timer.tick_announce();

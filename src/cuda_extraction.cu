@@ -59,7 +59,7 @@
         yet.
 */
 
-int * device_TV = nullptr;
+vtkIdType * device_TV = nullptr;
 void make_TV_for_GPU(const TV_Data & tv_relationship) {
     // You should not double-call this! Re-use existing results!
     if (device_TV != nullptr) {
@@ -71,20 +71,12 @@ void make_TV_for_GPU(const TV_Data & tv_relationship) {
     size_t tv_flat_size = sizeof(int) * tv_relationship.nCells * nbVertsInCell;
     // Allocations
     CUDA_ASSERT(cudaMalloc((void**)&device_TV, tv_flat_size));
-    int * host_flat_tv = nullptr;
-    CUDA_ASSERT(cudaMallocHost((void**)&host_flat_tv, tv_flat_size));
 
-    // Set contiguous data in host memory
-    int index = 0;
-    for (const auto & VertList : tv_relationship)
-        for (const int vertex : VertList)
-            host_flat_tv[index++] = vertex;
     // Device copy and host free
     // BLOCKING -- provide barrier if made asynchronous to avoid free of host
     // memory before copy completes
-    CUDA_WARN(cudaMemcpy(device_TV, host_flat_tv, tv_flat_size,
+    CUDA_WARN(cudaMemcpy(device_TV, tv_relationship.cells, tv_flat_size,
                          cudaMemcpyHostToDevice));
-    CUDA_WARN(cudaFreeHost(host_flat_tv));
 }
 
 vtkIdType * device_VE_vertices = nullptr,
@@ -350,7 +342,7 @@ std::unique_ptr<EV_Data> make_EV_GPU(const VE_Data & edgeTable,
     return edgeList;
 }
 
-__global__ void TF_kernel(const int * __restrict__ tv,
+__global__ void TF_kernel(const vtkIdType * __restrict__ tv,
                           const vtkIdType * __restrict__ vertices,
                           const vtkIdType * __restrict__ faces,
                           const vtkIdType * __restrict__ first_faces,
@@ -484,7 +476,7 @@ std::unique_ptr<TF_Data> make_TF_GPU(const TV_Data & TV,
                 tf_host[(nbFacesInCell*c)],
                 tf_host[(nbFacesInCell*c)+1],
                 tf_host[(nbFacesInCell*c)+2],
-                tf_host[(nbFacesInCell*c)+3],
+                tf_host[(nbFacesInCell*c)+3]
                 });
     }
     kernel.tick();
@@ -550,7 +542,7 @@ __device__ __inline__ void te_combine(vtkIdType quad0, vtkIdType quad1,
 }
 
 #define TE_CELLS_PER_BLOCK 195
-__global__ void TE_kernel(const int * __restrict__ tv,
+__global__ void TE_kernel(const vtkIdType * __restrict__ tv,
                           const vtkIdType * __restrict__ vertices,
                           const vtkIdType * __restrict__ edges,
                           const vtkIdType * __restrict__ first_index,
@@ -743,9 +735,9 @@ std::unique_ptr<TE_Data> make_TE_GPU(const TV_Data & TV,
     // Reconfigure for host
     for (vtkIdType c = 0; c < n_cells; ++c) {
         TE->emplace_back(std::array<vtkIdType,nbEdgesInCell>{
-                te_host[(6*c)  ], te_host[(6*c)+1],
-                te_host[(6*c)+2], te_host[(6*c)+3],
-                te_host[(6*c)+4], te_host[(6*c)+5]
+                te_host[(nbEdgesInCell*c)  ], te_host[(nbEdgesInCell*c)+1],
+                te_host[(nbEdgesInCell*c)+2], te_host[(nbEdgesInCell*c)+3],
+                te_host[(nbEdgesInCell*c)+4], te_host[(nbEdgesInCell*c)+5]
                 });
     }
     kernel.tick();
@@ -965,7 +957,7 @@ std::unique_ptr<ET_Data> make_ET_GPU(const TV_Data & TV,
 }
 */
 
-__global__ void VV_kernel(const int * __restrict__ tv,
+__global__ void VV_kernel(const vtkIdType * __restrict__ tv,
                           const int n_cells,
                           const int n_points,
                           const int offset,
@@ -977,9 +969,9 @@ __global__ void VV_kernel(const int * __restrict__ tv,
     if (tid >= (n_cells * nbVertsInCell)) return;
 
     // Mark yourself as adjacent to other cells alongside you
-    int cell_vertex = tv[tid], v0, v1, v2, v3;
+    vtkIdType cell_vertex = tv[tid], v0, v1, v2, v3;
     // IF INDIRECTED, look up your OWN cell_vertex's indirect value
-    int indirect_index = ivvi[cell_vertex];
+    vtkIdType indirect_index = ivvi[cell_vertex];
 
     // Use register exchanges within a warp to get all other values
     v0 = __shfl_sync(0xffffffff, cell_vertex, 0, 4);
@@ -1135,6 +1127,30 @@ std::unique_ptr<std::atomic<vtkIdType>[]> appears(new std::atomic<vtkIdType>[n_p
 }
 */
 
+int get_approx_max_VV_partitioned(const TV_Data & TV,
+                                  const vtkIdType n_points,
+                                  const vtkIdType *ivvi,
+                                  const int debug=NO_DEBUG) {
+    int *appears = (int*)malloc(n_points*sizeof(int));
+    bzero(appears, sizeof(int)*n_points);
+    int max = 0;
+    for (vtkIdType cell = 0; cell < TV.nCells; cell++) {
+        for (vtkIdType i = 0; i < nbVertsInCell; i++) {
+            // LOCALIZE so you don't hit OOB data
+            vtkIdType localized_index = ivvi[TV.cells[(cell*nbVertsInCell)+i]];
+            // Max can never be off by more than one
+            if (++appears[localized_index] > max) max++;
+        }
+    }
+    max *= 3;
+    max = ((max+31)/32)*32;
+    free(appears);
+    if (debug > NO_DEBUG)
+        std::cerr << INFO_EMOJI << "Approximated max " YELLOW_COLOR "VV"
+                     RESET_COLOR " adjacency: " << max << std::endl;
+    return max;
+}
+
 int get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points, const int debug=NO_DEBUG) {
     // This calculation does NOT need to be exact, it needs to upper-bound
     // our memory usage. In order to do so, we count the largest number of
@@ -1145,16 +1161,14 @@ int get_approx_max_VV(const TV_Data & TV, const vtkIdType n_points, const int de
     int *appears = (int*)malloc(n_points*sizeof(int));
     bzero(appears, sizeof(int)*n_points);
     int max = 0;
-    std::for_each(TV.begin(), TV.end(),
-            [&](const std::array<vtkIdType,nbVertsInCell> cell) {
-                for (const vtkIdType vertex : cell) {
-                    // Max can never be off by more than one so just increment it
-                    if (++appears[vertex] > max) max++;
-                }
-            });
+    for (vtkIdType cell = 0; cell < TV.nCells; cell++) {
+        for (vtkIdType i = 0; i < nbVertsInCell; i++) {
+            // Max can never be off by more than one so just increment it
+            if (++appears[TV.cells[(cell*nbVertsInCell)+i]] > max) max++;
+        }
+    }
     max *= 3; // Connected to 3 unique vertices for each cell present in
     // Minimum warp width for help with consistency
-    // TODO: Possibly round this UP to a multiple of 32 for threadblock alignment nice-ness
     max = ((max+31)/32)*32;
     free(appears);
     if (debug > NO_DEBUG)
