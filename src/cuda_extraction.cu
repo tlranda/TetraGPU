@@ -964,7 +964,7 @@ __global__ void VV_kernel(const vtkIdType * __restrict__ tv,
                           const vtkIdType * __restrict__ vvi,
                           const vtkIdType * __restrict__ ivvi,
                           unsigned int * __restrict__ index,
-                          int * __restrict__ vv) {
+                          vtkIdType * __restrict__ vv) {
     int tid = (blockDim.x * blockIdx.x) + threadIdx.x;
     if (tid >= (n_cells * nbVertsInCell)) return;
 
@@ -1001,7 +1001,7 @@ __global__ void VV_kernel(const vtkIdType * __restrict__ tv,
     if (v0 != cell_vertex) {
         // IF INDIRECTED: Plug in indirected value rather than cell_vertex
         // through this whole block & in all repetitions for v1,v2,v3
-        for (int i = 0; i < index[indirect_index]; i++) {
+        for (unsigned int i = 0; i < index[indirect_index]; i++) {
             if (vv[indirect_index*offset+i] == v0) {
                 logged = true;
                 break;
@@ -1015,7 +1015,7 @@ __global__ void VV_kernel(const vtkIdType * __restrict__ tv,
     // Repeat for v1
     if (v1 != cell_vertex) {
         logged = false;
-        for (int i = 0; i < index[indirect_index]; i++) {
+        for (unsigned int i = 0; i < index[indirect_index]; i++) {
             if (vv[indirect_index*offset+i] == v1) {
                 logged = true;
                 break;
@@ -1029,7 +1029,7 @@ __global__ void VV_kernel(const vtkIdType * __restrict__ tv,
     // Repeat for v2
     if (v2 != cell_vertex) {
         logged = false;
-        for (int i = 0; i < index[indirect_index]; i++) {
+        for (unsigned int i = 0; i < index[indirect_index]; i++) {
             if (vv[indirect_index*offset+i] == v2) {
                 logged = true;
                 break;
@@ -1043,7 +1043,7 @@ __global__ void VV_kernel(const vtkIdType * __restrict__ tv,
     // Repeat for v3
     if (v3 != cell_vertex) {
         logged = false;
-        for (int i = 0; i < index[indirect_index]; i++) {
+        for (unsigned int i = 0; i < index[indirect_index]; i++) {
             if (vv[indirect_index*offset+i] == v3) {
                 logged = true;
                 break;
@@ -1189,9 +1189,9 @@ device_VV * make_VV_GPU_return(const TV_Data & TV,
     }
 
     // Compute the relationship
-    size_t vv_size = sizeof(int) * n_points * max_VV_guess,
+    size_t vv_size = sizeof(vtkIdType) * n_points * max_VV_guess,
            vv_index_size = sizeof(unsigned int) * n_points;
-    int * vv_computed = nullptr;
+    vtkIdType * vv_computed = nullptr;
     unsigned int * vv_index = nullptr;
     CUDA_ASSERT(cudaMalloc((void**)&vv_computed, vv_size));
     CUDA_ASSERT(cudaMalloc((void**)&vv_index, vv_index_size));

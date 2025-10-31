@@ -132,7 +132,7 @@ __global__ void VV_kernel(const vtkIdType * __restrict__ tv,
                           const vtkIdType * __restrict__ vvi,
                           const vtkIdType * __restrict__ ivvi,
                           unsigned int * __restrict__ index,
-                          int * __restrict__ vv);
+                          vtkIdType * __restrict__ vv);
 
 device_VT * make_VT_GPU_return(const TV_Data & TV);
 device_VT * make_VT_GPU_return(const VT_Data & VT);

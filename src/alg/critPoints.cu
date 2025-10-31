@@ -25,7 +25,7 @@ __global__ void dummy_kernel(void) {
 #define TID_SELECTION (blockDim.x * blockIdx.x) + threadIdx.x
 #define PRINT_ON 0
 #define CONSTRAIN_BLOCK 0
-//* /
+//*/
 // Debugging specific block executions
 /*
 #define FORCED_BLOCK_IDX 30
@@ -35,7 +35,7 @@ __global__ void dummy_kernel(void) {
 */
 
 
-__global__ void critPoints(const int * __restrict__ VV,
+__global__ void critPoints(const vtkIdType * __restrict__ VV,
                            const unsigned int * __restrict__ VV_index,
                            int * __restrict__ valences,
                            const int points,
@@ -61,8 +61,9 @@ __global__ void critPoints(const int * __restrict__ VV,
 
     unsigned int *component_edits = &block_shared[0],
                  *upper_edits = &block_shared[0],
-                 *lower_edits = &block_shared[1],
-                 *neighborhood = &block_shared[2];
+                 *lower_edits = &block_shared[1];
+                 // Everything else is for neighborhood block reductions
+    vtkIdType *neighborhood = (vtkIdType*)(block_shared+2);
     const int tid = TID_SELECTION;
     /*
         1) Parallelize VV on second-dimension (can early-exit block if no data
@@ -71,11 +72,12 @@ __global__ void critPoints(const int * __restrict__ VV,
     */
     // my_1d & my_2d are the dense indices
     // indirect_my_1d & indirect_my_2d are sparsified for structures that are shrunk by partition-limitations
-    const int indirect_my_1d = tid / max_VV_guess,
-              my_1d = vvi[indirect_my_1d],
-              my_2d = VV[tid],
-              indirect_my_2d = ivvi[my_2d];
+    const vtkIdType indirect_my_1d = tid / max_VV_guess,
+                    my_1d = vvi[indirect_my_1d],
+                    my_2d = VV[tid],
+                    indirect_my_2d = ivvi[my_2d];
     // No work for this point's valence or out of partition
+    bool execution_mask = true;
     if (VV_index[indirect_my_1d] <= 0 || my_2d < 0 || partition[indirect_my_1d] == 0) {
         #if PRINT_ON
         /*
@@ -83,10 +85,10 @@ __global__ void critPoints(const int * __restrict__ VV,
                blockIdx.x, threadIdx.x);
         */
         #endif
-        return;
+        execution_mask = false;
     }
     // Prefix scan as anti-duplication
-    for (int i = indirect_my_1d * max_VV_guess; i < tid; i++) {
+    for (vtkIdType i = indirect_my_1d * max_VV_guess; i < tid; i++) {
         if (VV[i] == my_2d) {
             #if PRINT_ON
             /*
@@ -94,15 +96,17 @@ __global__ void critPoints(const int * __restrict__ VV,
                    blockIdx.x, threadIdx.x);
             */
             #endif
-            return;
+            execution_mask = false;
         }
     }
 
     // BEYOND THIS POINT, YOU ARE AN ACTUAL WORKER THREAD ON THE PROBLEM
     #if PRINT_ON
     // Not every thread needs to print this out, but every thread should have the same value
-    printf("Block %d Thread %02d remains to participate in computation (VV_index=%d)\n",
+    /*
+    printf("Block %d Thread %02d remains to participate in computation (VV_index=%u)\n",
            blockIdx.x, threadIdx.x, VV_index[indirect_my_1d]);
+    */
     #endif
 
     /*
@@ -113,20 +117,26 @@ __global__ void critPoints(const int * __restrict__ VV,
     // Classify yourself as an upper or lower valence neighbor to your 1d point
     // my_2d is {Upper = -1, Lower = 1} relative to my_1d
     // For parity with Paraview, a tie needs to be broken by lower vertex ID being "lower" than the other one
-    const int my_class = 1 - (
-                          (scalar_values[indirect_my_2d] == scalar_values[indirect_my_1d] ?
-                                my_2d < my_1d :
-                                scalar_values[indirect_my_2d] < scalar_values[indirect_my_1d])
-                           << 1);
-    valences[tid] = my_class;
-    const int min_my_1d = (indirect_my_1d * max_VV_guess),
-              max_my_1d = min_my_1d + VV_index[indirect_my_1d];
-    neighborhood[threadIdx.x] = my_2d; // Initialize neighborhood with YOURSELF
+    int my_class; /* could be const except for the execution mask part */
+    vtkIdType min_my_1d, max_my_1d; /* could be const except for the execution mask part */
+    if (execution_mask) {
+        my_class = 1 - (
+                        (scalar_values[indirect_my_2d] == scalar_values[indirect_my_1d] ?
+                            my_2d < my_1d :
+                            scalar_values[indirect_my_2d] < scalar_values[indirect_my_1d])
+                        << 1);
+        valences[tid] = my_class;
+        min_my_1d = (indirect_my_1d * max_VV_guess);
+        max_my_1d = min_my_1d + VV_index[indirect_my_1d];
+        neighborhood[threadIdx.x] = my_2d; // Initialize neighborhood with YOURSELF
+    }
     __syncthreads();
     #if PRINT_ON
-    printf("Block %d Thread %02d B init on my_1d %d and my_2d %d with valence %d based on %lf (block) vs %lf (thread)\n",
-           blockIdx.x, threadIdx.x, my_1d, my_2d, my_class,
-           scalar_values[indirect_my_1d], scalar_values[indirect_my_2d]);
+    if (execution_mask) {
+        printf("Block %d Thread %02d B init on my_1d %ld and my_2d %ld with valence %d based on %lf (block) vs %lf (thread)\n",
+               blockIdx.x, threadIdx.x, my_1d, my_2d, my_class,
+               scalar_values[indirect_my_1d], scalar_values[indirect_my_2d]);
+    }
     #endif
     /*
         3) For all other threads sharing your neighborhood classification, scan
@@ -150,10 +160,10 @@ __global__ void critPoints(const int * __restrict__ VV,
             #if PRINT_ON
             /*
             printf("Block %d Iteration %d: upper_edits %u lower_edits %u "
-                   "Neighborhood %d %d %d %d %d %d %d %d "
-                                "%d %d %d %d %d %d %d %d "
-                                "%d %d %d %d %d %d %d %d "
-                                "%d %d %d %d %d %d %d %d\n",
+                   "Neighborhood %ld %ld %ld %ld %ld %ld %ld %ld "
+                                "%ld %ld %ld %ld %ld %ld %ld %ld "
+                                "%ld %ld %ld %ld %ld %ld %ld %ld "
+                                "%ld %ld %ld %ld %ld %ld %ld %ld\n",
                     blockIdx.x, to_converge, *upper_edits, *lower_edits,
                     neighborhood[0],neighborhood[1],neighborhood[2],neighborhood[3],
                     neighborhood[4],neighborhood[5],neighborhood[6],neighborhood[7],
@@ -170,53 +180,71 @@ __global__ void critPoints(const int * __restrict__ VV,
         }
         to_converge++;
         __syncthreads();
+        if (execution_mask) {
+            #if PRINT_ON
+            printf("Block %d thread %02d clears START UF sync %d\n", blockIdx.x, threadIdx.x, to_converge);
+            #endif
 
-        // Union-Find iteration
-        for(int i = min_my_1d; i < max_my_1d; i++) {
-            // Found same valence
-            const int candidate_component_2d = VV[i],
-                      indirect_candidate_component_2d = ivvi[candidate_component_2d];
-            if (i != tid && valences[i] == my_class) {
-                // Find yourself in their adjacency to become a shared component and release shmem write burden
-                const int start_2d = indirect_candidate_component_2d*max_VV_guess,
-                          stop_2d  = start_2d + VV_index[indirect_candidate_component_2d];
-                #if PRINT_ON
-                if (start_2d > blockDim.x * gridDim.x) {
+            // Union-Find iteration
+            for(vtkIdType i = min_my_1d; i < max_my_1d; i++) {
+                // Found same valence
+                const vtkIdType candidate_component_2d = VV[i],
+                                indirect_candidate_component_2d = ivvi[candidate_component_2d];
+                if (i != tid && valences[i] == my_class) {
+                    // Find yourself in their adjacency to become a shared component and release shmem write burden
+                    const vtkIdType start_2d = indirect_candidate_component_2d*max_VV_guess,
+                                    stop_2d  = start_2d + VV_index[indirect_candidate_component_2d];
+                    #if PRINT_ON
                     /*
-                    printf("Block %d Thread %02d has bad iterator from %d to %d based on direct %d and indirect %d at iteration %d\n",
-                            blockIdx.x, threadIdx.x, start_2d, stop_2d, candidate_component_2d, indirect_candidate_component_2d, i);
+                    if (start_2d > blockDim.x * gridDim.x) {
+                        printf("Block %d Thread %02d has bad iterator from %ld to %ld based on direct %ld and indirect %ld at iteration %ld\n",
+                                blockIdx.x, threadIdx.x, start_2d, stop_2d, candidate_component_2d, indirect_candidate_component_2d, i);
+                    }
                     */
-                }
-                #endif
-                for(int j = start_2d; j < stop_2d; j++) {
-                    /* Do you see your 2d in their 2d? If so, update your
-                       neighborhood with the minimum of your two points
-                    */
-                    const int theirNeighborhood = neighborhood[i-min_my_1d];
-                    if (VV[j] == my_2d && neighborhood[threadIdx.x] > theirNeighborhood) {
-                        #if PRINT_ON
-                        printf("Block %d Thread %02d neighborhood update %d --> %d\n",
-                                blockIdx.x, threadIdx.x, neighborhood[threadIdx.x], theirNeighborhood);
-                        #endif
-                        neighborhood[threadIdx.x] = theirNeighborhood;
-                        atomicAdd(component_edits+((my_class+1)/2), 1);
+                    #endif
+                    for(vtkIdType j = start_2d; j < stop_2d; j++) {
+                        /* Do you see your 2d in their 2d? If so, update your
+                           neighborhood with the minimum of your two points
+                        */
+                        const vtkIdType theirNeighborhood = neighborhood[i-min_my_1d];
+                        if (VV[j] == my_2d && neighborhood[threadIdx.x] > theirNeighborhood) {
+                            #if PRINT_ON
+                            /*
+                            printf("Block %d Thread %02d neighborhood update iteration %0d moves %ld --> %ld\n",
+                                    blockIdx.x, threadIdx.x, to_converge, neighborhood[threadIdx.x], theirNeighborhood);
+                            */
+                            #endif
+                            neighborhood[threadIdx.x] = theirNeighborhood;
+                            atomicAdd(component_edits+((my_class+1)/2), 1);
+                        }
                     }
                 }
             }
         }
         __syncthreads();
-        upper_converge = *upper_edits == 0;
-        lower_converge = *lower_edits == 0;
+        upper_converge = (*upper_edits == 0);
+        lower_converge = (*lower_edits == 0);
+        #if PRINT_ON
+        if (execution_mask) {
+            printf("Block %d Thread %02d ends UF loop %02d with upper_edits %u lower_edits %u (loop condition: %d = [%d[!%d && %d] && %d])\n",
+                    blockIdx.x, threadIdx.x, to_converge, *upper_edits, *lower_edits,
+                    !(upper_converge && lower_converge) && to_converge < max_VV_guess,
+                    !(upper_converge && lower_converge),
+                    upper_converge, lower_converge,
+                    to_converge < max_VV_guess
+                    );
+        }
+        #endif
     }
     // End all Union-Finds
 
-    if (neighborhood[threadIdx.x] == my_2d) { // You are the root of a component!
-        const int memoffset = ((indirect_my_1d*3)+((my_class+1)/2));
+    if (execution_mask && neighborhood[threadIdx.x] == my_2d) { // You are the root of a component!
+        const vtkIdType memoffset = ((indirect_my_1d*3)+((my_class+1)/2));
         const unsigned int old = atomicAdd(classes+memoffset,1);
         #if PRINT_ON
-        printf("Block %d Thread %02d Writes %s component @ mem offset %d (old: %u)\n",
+        printf("Block %d Thread %02d Writes %s component @ mem offset %ld (old: %u) after %02d iterations\n",
                blockIdx.x, threadIdx.x,
-               (my_class == -1 ? "Upper" : "Lower"), memoffset, old);
+               (my_class == -1 ? "Upper" : "Lower"), memoffset, old, to_converge);
         #endif
     }
     __syncthreads();
@@ -228,15 +256,12 @@ __global__ void critPoints(const int * __restrict__ VV,
     */
     // Limit classification to lowest-ranked thread for single write
     if (threadIdx.x == 0) {
-        const int my_classes = indirect_my_1d*3;
+        const vtkIdType my_classes = indirect_my_1d*3;
         const unsigned int upper = classes[my_classes],
                            lower = classes[my_classes+1];
         #if PRINT_ON
-        if (to_converge > max_VV_guess / 2) {
-            printf("Block %02d took %d loops to converge\n", blockIdx.x, to_converge);
-        }
-        printf("Block %d Thread %02d Verdict: my_1d (%d) has %u upper and %u lower\n",
-               blockIdx.x, threadIdx.x, my_1d, upper, lower);
+        printf("Block %d Thread %02d Verdict: my_1d (%ld) has %u upper and %u lower after %02d iterations\n",
+               blockIdx.x, threadIdx.x, my_1d, upper, lower, to_converge);
         #endif
 
         // Set classification
@@ -270,8 +295,8 @@ __global__ void critPoints(const int * __restrict__ VV,
         }
     }
     #if PRINT_ON
-    printf("Block %d Thread %02d exits normally at end of computation\n",
-           blockIdx.x, threadIdx.x);
+    printf("Block %d Thread %02d exits normally at end of computation with %02d iterations\n",
+           blockIdx.x, threadIdx.x, to_converge);
     #endif
 }
 
@@ -387,7 +412,7 @@ void full_check_VV_Host(const size_t vv_size, const size_t vv_index_size,
                         const size_t tv_size,
                         const int max_VV_local, const vtkIdType points,
                         const vtkIdType cells,
-                        const int * device_vv,
+                        const vtkIdType * device_vv,
                         const unsigned int * device_vv_index,
                         const vtkIdType * dev_vvi,
                         const vtkIdType * dev_ivvi,
@@ -399,7 +424,7 @@ void full_check_VV_Host(const size_t vv_size, const size_t vv_index_size,
     CUDA_WARN(cudaMemcpyAsync(host_flat_tv, device_localized_tv, tv_size,
                               cudaMemcpyDeviceToHost, stream));
     // Host copy of VV data
-    int * host_vv = nullptr;
+    vtkIdType * host_vv = nullptr;
     CUDA_ASSERT(cudaMallocHost((void**)&host_vv, vv_size));
     CUDA_WARN(cudaMemcpyAsync(host_vv, device_vv, vv_size,
                               cudaMemcpyDeviceToHost, stream));
@@ -474,96 +499,6 @@ void full_check_VV_Host(const size_t vv_size, const size_t vv_index_size,
     CUDA_WARN(cudaFreeHost(host_ivvi));
 }
 
-void gale_check_VV_Host(size_t vv_size, size_t vv_index_size, int max_VV_local,
-                        int * device_vv, unsigned int * device_vv_index, cudaStream_t stream) {
-    int * host_vv = nullptr;
-    unsigned int * host_vv_index = nullptr;
-    CUDA_ASSERT(cudaMallocHost((void**)&host_vv, vv_size));
-    CUDA_ASSERT(cudaMallocHost((void**)&host_vv_index, vv_index_size));
-    CUDA_WARN(cudaMemcpyAsync(host_vv, device_vv, vv_size, cudaMemcpyDeviceToHost, stream));
-    CUDA_WARN(cudaMemcpyAsync(host_vv_index, device_vv_index, vv_index_size, cudaMemcpyDeviceToHost, stream));
-    CUDA_WARN(cudaStreamSynchronize(stream));
-    int MAX_PRINT = 100;
-    for (int i = 0; i < 4; i++) {
-        std::cerr << "Sanity check VV[" << i << "] with size " << host_vv_index[i] << std::endl;
-        int consecutive_minus_1 = 0;
-        for (int j = 0; j < max_VV_local && MAX_PRINT > 0; j++) {
-            if (host_vv[(i*max_VV_local)+j] == -1) {
-                consecutive_minus_1++;
-                continue;
-            }
-            else if (consecutive_minus_1 > 0) {
-                std::cerr << "\t" << i << ": -1 (" << consecutive_minus_1 << " times)" << std::endl;
-            }
-            std::cerr << "\t" << i << ": " << host_vv[(i*max_VV_local)+j] << std::endl;
-            MAX_PRINT--;
-        }
-        if (consecutive_minus_1 > 0) {
-            std::cerr << "\t" << i << ": (possibly not complete: " << consecutive_minus_1 << " consecutive leftover -1's)" << std::endl;
-        }
-    }
-    CUDA_ASSERT(cudaFreeHost(host_vv));
-    CUDA_ASSERT(cudaFreeHost(host_vv_index));
-}
-
-void check_VV_errors(size_t vv_size, size_t vv_index_size,
-                     int * vv_computed, unsigned int * vv_index,
-                     TV_Data * TV, int max_VV_guess, cudaStream_t stream) {
-    unsigned int * host_vv_index = nullptr;
-    CUDA_ASSERT(cudaMallocHost((void**)&host_vv_index, vv_index_size));
-    CUDA_WARN(cudaMemcpyAsync(host_vv_index, vv_index, vv_index_size, cudaMemcpyDeviceToHost, stream));
-    unsigned int duplicates = 0, minmax_size = 0, actual_size = 0;
-    std::vector<unsigned int> overflow = std::vector<unsigned int>();
-    int * host_vv = nullptr;
-    // Determine the real size of de-duplicated VV
-    CUDA_ASSERT(cudaMallocHost((void**)&host_vv, vv_size));
-    CUDA_WARN(cudaMemcpyAsync(host_vv, vv_computed, vv_size, cudaMemcpyDeviceToHost, stream));
-    CUDA_WARN(cudaStreamSynchronize(stream));
-    std::vector<unsigned int> deduped_length(TV->nPoints);
-    std::vector<int> known_points(max_VV_guess);
-    unsigned int max_maybe_duped_degree = 0, max_actual_degree = 0;
-    for (int j = 0; j < TV->nPoints; j++) {
-        known_points.clear();
-        actual_size += host_vv_index[j];
-        if (host_vv_index[j] > static_cast<unsigned int>(max_VV_guess)) {
-            overflow.emplace_back(host_vv_index[j]-max_VV_guess);
-        }
-        if (host_vv_index[j] > max_maybe_duped_degree) {
-            max_maybe_duped_degree = host_vv_index[j];
-        }
-        for (unsigned int k = 0; k < host_vv_index[j]; k++) {
-            if (std::find(known_points.begin(), known_points.end(), host_vv[(j*max_VV_guess+k)]) == known_points.end()) {
-                known_points.emplace_back(host_vv[(j*max_VV_guess)+k]);
-            }
-            else {
-                duplicates++;
-            }
-        }
-        minmax_size += known_points.size();
-        if (known_points.size() > max_actual_degree) {
-            max_actual_degree = known_points.size();
-        }
-    }
-    if (overflow.size() > 0) {
-        std::cerr << WARN_EMOJI << "Detected " << overflow.size() << " points in VV that overflow the maximum adjacency limit!" << std::endl;
-        std::cerr << WARN_EMOJI << "Overflow amounts: ";
-        for (auto j : overflow) {
-            std::cerr << j << ", ";
-        }
-        std::cerr << std::endl;
-    }
-    else {
-        std::cerr << OK_EMOJI << "No overflow of VV detected" << std::endl;
-    }
-    if (duplicates > 0) {
-        std::cerr << WARN_EMOJI << "Detected " << duplicates << " VV duplicates (" << actual_size << " total entries, minimum count: " << minmax_size << " -- " << (actual_size/static_cast<float>(minmax_size))-1.0 << " proportionate extra)" << std::endl;
-    }
-    else {
-        std::cerr << OK_EMOJI << "No VV duplication detected. Minimum count: " << minmax_size << std::endl;
-    }
-    std::cerr << INFO_EMOJI << "Max VV was set to " << max_VV_guess << ". ACTUAL max VV is " << max_actual_degree << ", max utilized VV is " << max_maybe_duped_degree << std::endl;
-}
-
 struct thread_arguments {
     int gpu_id, n_parallel;
     std::shared_ptr<TV_Data> TV;
@@ -635,9 +570,9 @@ void * parallel_work(void *parallel_arguments) {
               max_allocated_SFCP_points = 0;
     int * host_flat_tv = nullptr,
         * partition = nullptr,
-        * vv_computed = nullptr,
         * device_valences = nullptr;
-    vtkIdType * device_tv = nullptr;
+    vtkIdType * device_tv = nullptr,
+              * vv_computed = nullptr;
     unsigned int * vv_index = nullptr,
                  * host_CPCs = nullptr,
                  * device_CPCs = nullptr;
@@ -667,8 +602,8 @@ void * parallel_work(void *parallel_arguments) {
         partition_metadata.emplace_back(std::pair<int,int>(TV->n_per_partition[0], 0));
     }
     else {
-        //for (int partition_idx = my_partition_id; partition_idx < TV->n_partitions; partition_idx += n_parallel)
-        for (int partition_idx : {46 /*2,46,10*/}) // Analyze ONLY the listed partitions!
+        for (int partition_idx = my_partition_id; partition_idx < TV->n_partitions; partition_idx += n_parallel)
+        //for (int partition_idx : {2 /*2,46,10*/}) // Analyze ONLY the listed partitions!
         {
             partition_metadata.emplace_back(std::pair<int, int>(TV->n_per_partition[partition_idx], partition_idx));
         }
@@ -767,7 +702,7 @@ void * parallel_work(void *parallel_arguments) {
             TV_LOCALIZATION.label_next_interval("TV cell remapping via VVI and IVVI");
             TV_LOCALIZATION.tick();
             // Write the cells using localized indices
-            if (included_points.size() > max_allocated_points) {
+            if (static_cast<vtkIdType>(included_points.size()) > max_allocated_points) {
                 if (_my_args.debug > DEBUG_MIN) {
                     out << WARN_EMOJI << timername << " Allocate (or reallocate) sparse_vvi" << std::endl;
                 }
@@ -880,7 +815,7 @@ void * parallel_work(void *parallel_arguments) {
         timer.tick();
         // Subsize within allocation OR new required allocation size
         size_t tv_flat_size = sizeof(vtkIdType) * TV_local->nCells * nbVertsInCell,
-               vv_size = sizeof(int) * TV_local->nPoints * max_VV_local,
+               vv_size = sizeof(vtkIdType) * TV_local->nPoints * max_VV_local,
                partition_size = sizeof(int) * TV_local->nPoints,
                vv_index_size = sizeof(unsigned int) * TV_local->nPoints;
         if (TV_local->nCells > max_allocated_cells ||
@@ -1014,7 +949,7 @@ void * parallel_work(void *parallel_arguments) {
                scalar_values_size = sizeof(double) * TV_local->nPoints;
         // SHMEM size in kernel is NOT allocated by driver code, so let this
         // be set for each partition
-        const size_t shared_mem_size = sizeof(unsigned int) * (2+max_VV_local);
+        const size_t shared_mem_size = (sizeof(unsigned int) * 2) + (sizeof(vtkIdType) * max_VV_local);
         // Abundance of caution but should be unnecessary:
         CUDA_WARN(cudaStreamSynchronize(thread_stream));
 
@@ -1049,20 +984,6 @@ void * parallel_work(void *parallel_arguments) {
         CUDA_WARN(cudaMemsetAsync(device_CPCs, 0, cpc_size, thread_stream));
         CUDA_WARN(cudaStreamSynchronize(thread_stream));
         timer.tick_announce();
-
-        /*
-        // DEBUG: Check VV for threats to correctness / efficiency
-        sprintf(intervalname, "%s Check for VV duplicates / error", timername);
-        timer.label_next_interval(intervalname);
-        timer.tick();
-        // More intended for GALE integration: checks more specifically
-        //gale_check_VV_Host(vv_size, vv_index_size, max_VV_local, vv_computed, vv_index);
-        // Detects errors but not very specifically
-        check_VV_errors(vv_size, vv_index_size, vv_computed, vv_index, TV_local,
-                        max_VV_local, thread_stream);
-        timer.tick_announce();
-        */
-
 
         // Critical Points
         sprintf(intervalname, "%s Run " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm", timername);
@@ -1151,7 +1072,7 @@ void * parallel_work(void *parallel_arguments) {
                           _expect = 0;
                 if (_upper >= 1 && _lower == 0) _expect = MINIMUM_CLASS;
                 else if (_upper == 0 && _lower >= 1) _expect = MAXIMUM_CLASS;
-                else if (_upper == 1 && _lower == 1) _expect = MAXIMUM_CLASS;
+                else if (_upper == 1 && _lower == 1) _expect = REGULAR_CLASS;
                 else if (_upper > 1 && _lower > 1) _expect = SADDLE_CLASS;
                 if (_class != _expect) {
                     out << "Insanity at GPU partition " << my_partition_id

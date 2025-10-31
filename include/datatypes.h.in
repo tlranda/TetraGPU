@@ -96,13 +96,13 @@ struct TV_Data {
 };
 // deviceVV structure should be deprecable
 typedef struct deviceVV {
-    int * computed;
+    vtkIdType * computed;
     unsigned int * index;
     deviceVV() {
         computed = nullptr;
         index = nullptr;
     }
-    deviceVV(int * c, unsigned int * i) {
+    deviceVV(vtkIdType * c, unsigned int * i) {
         computed = c; index = i;
     }
     /*
