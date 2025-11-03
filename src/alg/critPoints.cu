@@ -53,6 +53,8 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
     // All other SHMEM is used for neighborhood block reductions
     vtkIdType *neighborhood = (vtkIdType*)(block_shared+2);
 
+    // Set execution mask to EXCLUDE no work / out-of-partition points
+    bool execution_mask = true;
     /*
         1) Parallelize VV on second-dimension
 
@@ -63,12 +65,16 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
     const int tid = TID_SELECTION; // Macro defined above kernel
     const vtkIdType indirect_my_1d = tid / max_VV_guess,
                     my_1d = vvi[indirect_my_1d],
-                    my_2d = VV[tid],
-                    indirect_my_2d = ivvi[my_2d];
+                    my_2d = VV[tid];
+    vtkIdType indirect_my_2d;
+    if (my_2d < 0 ) {
+        execution_mask = false;
+    }
+    else {
+        indirect_my_2d = ivvi[my_2d];
+    }
 
-    // Set execution mask to EXCLUDE no work / out-of-partition points
-    bool execution_mask = true;
-    if (VV_index[indirect_my_1d] <= 0 || my_2d < 0 || partition[indirect_my_1d] == 0) {
+    if (VV_index[indirect_my_1d] <= 0 || partition[indirect_my_1d] == 0) {
         #if PRINT_ON
         /*
         printf("Block %d Thread %02d exits due to partitioning or OOB data\n",
@@ -368,10 +374,12 @@ void export_classes(unsigned int * classes,
             n_insane[partition_id]++;
         }
         // Output formats
-        if (args.debug > NO_DEBUG && my_class > 0)
+        if (args.debug > NO_DEBUG && my_class > 0) {
             /* out << "A Class " << i << " = " << my_class / * class_names[my_class] * /
                 / * << "(Upper: " << n_upper << ", Lower: " << n_lower << ")" * /
                 << std::endl; */
+            out << "A " << i << " " << my_class << std::endl;
+        }
         if (my_class == MAXIMUM_CLASS) {
             n_max[partition_id]++;
         }
