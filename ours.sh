@@ -9,7 +9,7 @@
 
 # Configuration
 override=0; # Set to 1 for override
-n_repeats=3; # Times to repeat each dataset
+n_repeats=1; # Times to repeat each dataset
 
 cd /home/tlranda/TetraTopo_GPU/TetraGPU;
 source env.sh; # Modulefiles and list
@@ -25,25 +25,25 @@ echo "Full subscribe: ${full_subscribe}";
 mkdir -p ${HOSTNAME}_outputs;
 
 datasets=$( ls -d datasets/*.vtu );
-declare -A target_array=( [datasets/Bucket.vtu]=Result
-                          [datasets/viscousFingering.vtu]=concentration
-                          [datasets/ctBones.vtu]=Scalars_
-                          [datasets/Engine_100.vtu]=Scalars_
-                          [datasets/Foot_100.vtu]=Scalars_
-                          [datasets/Fish_100.vtu]=Elevation
-                          [datasets/Asteroid_100.vtu]=scalar
-                          [datasets/Hole_100.vtu]=Result
-                          [datasets/Stent_100.vtu]=Scalars_
+declare -A target_array=( [datasets/Bucket_1000.vtu]=Result
+                          [datasets/viscousFingering_100.vtu]=concentration
+                          [datasets/ctBones_8pt.vtu]=Scalars_
+                          [datasets/Engine_1000.vtu]=Scalars_
+                          [datasets/Foot_1000.vtu]=Scalars_
+                          [datasets/Fish_1000.vtu]=Elevation
+                          [datasets/Asteroid_8.vtu]=scalar
+                          [datasets/Hole_1000.vtu]=Result
+                          [datasets/Stent_8pt.vtu]=Scalars_
                          );
-declare -A memory_limits=( [datasets/Bucket.vtu]=N
-                           [datasets/viscousFingering.vtu]=N
-                           [datasets/ctBones.vtu]=78
-                           [datasets/Engine_100.vtu]=N
-                           [datasets/Foot_100.vtu]=N
-                           [datasets/Fish_100.vtu]=N
-                           [datasets/Asteroid_100.vtu]=N
-                           [datasets/Hole_100.vtu]=151
-                           [datasets/Stent_100.vtu]=73
+declare -A memory_limits=( [datasets/Bucket_1000.vtu]=N
+                           [datasets/viscousFingering_100.vtu]=N
+                           [datasets/ctBones_8pt.vtu]=N #78
+                           [datasets/Engine_1000.vtu]=N
+                           [datasets/Foot_1000.vtu]=N
+                           [datasets/Fish_1000.vtu]=N
+                           [datasets/Asteroid_8.vtu]=N
+                           [datasets/Hole_1000.vtu]=N #151
+                           [datasets/Stent_8pt.vtu]=N #73
                           );
 for ds in ${datasets[@]}; do
     echo "${ds}";
@@ -63,7 +63,7 @@ for ds in ${datasets[@]}; do
     fi;
     # Array selected; proceed
     echo -e "\tUsing array: ${used_array}";
-    cmd="./build_${HOSTNAME}/./main --input ${ds} --arrayname ${used_array} -t ${full_subscribe} --export /dev/null";
+    cmd="./build_${HOSTNAME}/./main --input ${ds} --arrayname ${used_array} -p _index -t ${full_subscribe} --export /dev/null";
     limit_size="${memory_limits[$ds]}";
     if [[ "${limit_size}" != "N" ]]; then
         cmd="${cmd} --max_VV ${limit_size}";
@@ -71,13 +71,17 @@ for ds in ${datasets[@]}; do
     fi;
     for iteration in `seq 1 ${n_repeats}`; do
         to_make="${HOSTNAME}_outputs/${shortname}_${full_subscribe}CPUS_iter_${iteration}.output";
-	if [[ ! -e "${to_make}" || ${override} == 1 ]]; then
-	    full_command="${cmd} > ${to_make}";
-	    echo "${full_command}";
-            eval "${full_command}";
-	else
-	    echo "${to_make} exists, skipping...";
-	fi;
+        if [[ ! -e "${to_make}" || ${override} == 1 ]]; then
+            full_command="${cmd} > ${to_make}";
+            echo "${full_command}";
+            cmd_rval=eval "${full_command}";
+            if [[ ${cmd_rval} -ne 0 ]]; then
+                echo "BAD EXIT CODE: ${cmd_rval}";
+                break;
+            fi;
+        else
+            echo "${to_make} exists, skipping...";
+        fi;
     done;
 done;
 # Analyze all captured traces
