@@ -36,6 +36,8 @@ class_names = ['NULL','min','max','regular','saddle']
 insanity, classes = list(), dict((k,list()) for k in range(len(class_names)))
 with open(args.target_file,'r') as f:
     for l in f.readlines():
+        if l.startswith('Total') or l.startswith('Partition'):
+            continue
         # Longer form output detected
         if "Upper:" in l and "Lower:" in l:
             # Other output format
