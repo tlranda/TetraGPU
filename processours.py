@@ -4,7 +4,9 @@ p = argparse.ArgumentParser()
 p.add_argument('file', nargs="+", help="STDOUT from our CriticalPoints run")
 args = p.parse_args()
 
-suffix100s = ['ALL Critical Points',]
+# 'ALL Critical Points', 
+suffix100s = ["SFCP kernel"]
+exclude = {'SFCP kernel': ["Setup for"],}
 
 averaging = dict()
 
@@ -14,8 +16,16 @@ for fname in args.file:
         lines = f.readlines()
         keep = list()
         for line in lines:
-            if any([_ in line for _ in suffix100s]):
-                keep.append(line.rstrip())
+            for maybe in suffix100s:
+                if maybe not in line:
+                    continue
+                excluded = False
+                for exclusion in exclude[maybe]:
+                    if exclusion in line:
+                        excluded = True
+                        break
+                if not excluded:
+                    keep.append(line.rstrip())
 
     total_time = 0.0
     for line in keep:
@@ -24,7 +34,7 @@ for fname in args.file:
                 what = maybe
                 section = line[line.rindex(' ')+1:]
                 break
-        print("\t", what, '---', section)
+        print("\t"+f"{what} ({line}) --- {section}")
         try:
             total_time += float(section)
         except ValueError:
