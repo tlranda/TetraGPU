@@ -562,6 +562,7 @@ void * parallel_work(void *parallel_arguments) {
     char timername[32], intervalname[128];
     sprintf(timername, "Parallel worker %02d", gpu_id);
     Timer timer(true, timername, _my_args.debug == NO_DEBUG);
+    Timer thread_time(false, timername, false);
 
     // Establish GPU to utilize and allocate a stream for its operations
     int actual_gpus, vgpu_id, my_partition_id = gpu_id;
@@ -682,9 +683,9 @@ void * parallel_work(void *parallel_arguments) {
                          "both arrays are identity!" << std::endl;
         }
         else {
-            Timer TV_LOCALIZATION(true, "TV Localization");
-            TV_LOCALIZATION.label_next_interval("Determine points and cells");
-            TV_LOCALIZATION.tick();
+            //Timer TV_LOCALIZATION(true, "TV Localization");
+            //TV_LOCALIZATION.label_next_interval("Determine points and cells");
+            //TV_LOCALIZATION.tick();
             // START TV LOCALIZATION -- THIS TAKES A WHILE
             // Determine the number of points and cells
             vtkIdType n_points = 0, n_cells = 0;
@@ -714,9 +715,9 @@ void * parallel_work(void *parallel_arguments) {
                     }
                 }
             }
-            TV_LOCALIZATION.tick_announce();
-            TV_LOCALIZATION.label_next_interval("Point remapping");
-            TV_LOCALIZATION.tick();
+            //TV_LOCALIZATION.tick_announce();
+            //TV_LOCALIZATION.label_next_interval("Point remapping");
+            //TV_LOCALIZATION.tick();
 
             // Now all included points and cells are known -- make stable remapping
             std::map<vtkIdType, vtkIdType> partition_remapping;
@@ -729,9 +730,9 @@ void * parallel_work(void *parallel_arguments) {
             }
             // This is correct, save an operation or two
             inverse_partition_mapping = std::move(stable_vertices);
-            TV_LOCALIZATION.tick_announce();
-            TV_LOCALIZATION.label_next_interval("TV cell remapping via VVI and IVVI");
-            TV_LOCALIZATION.tick();
+            //TV_LOCALIZATION.tick_announce();
+            //TV_LOCALIZATION.label_next_interval("TV cell remapping via VVI and IVVI");
+            //TV_LOCALIZATION.tick();
             // Write the cells using localized indices
             if (static_cast<vtkIdType>(included_points.size()) > max_allocated_points) {
                 if (_my_args.debug > DEBUG_MIN) {
@@ -755,13 +756,13 @@ void * parallel_work(void *parallel_arguments) {
                 sparse_vvi[nth_point++] = point;
             }
 
-            TV_LOCALIZATION.tick_announce();
+            //TV_LOCALIZATION.tick_announce();
 
             n_points = included_points.size();
             n_cells = cells.size();
 
-            TV_LOCALIZATION.label_next_interval("Partition and Vertex remapping");
-            TV_LOCALIZATION.tick();
+            //TV_LOCALIZATION.label_next_interval("Partition and Vertex remapping");
+            //TV_LOCALIZATION.tick();
             double * localVertexAttributes = new double[n_points];
             int * partition_IDs = new int[n_points];
             // Now fetch data for partition inclusion and scalars using inv map
@@ -772,11 +773,11 @@ void * parallel_work(void *parallel_arguments) {
                 partition_IDs[nth_point] = (TV->partitionIDs[vertex] == my_partition_id);
                 localVertexAttributes[nth_point++] = TV->vertexAttributes[vertex];
             }
-            TV_LOCALIZATION.tick_announce();
+            //TV_LOCALIZATION.tick_announce();
 
             // Set TV_local using localized data
-            TV_LOCALIZATION.label_next_interval("Setup TV_local object");
-            TV_LOCALIZATION.tick();
+            //TV_LOCALIZATION.label_next_interval("Setup TV_local object");
+            //TV_LOCALIZATION.tick();
             TV_local = new TV_Data(n_points, n_cells);
             // Localized only includes binary partition (IN|OUT)
             TV_local->n_partitions = 2;
@@ -788,10 +789,10 @@ void * parallel_work(void *parallel_arguments) {
             }
             TV_local->partitionIDs = partition_IDs;
             TV_local->vertexAttributes = localVertexAttributes;
-            TV_LOCALIZATION.tick_announce();
+            //TV_LOCALIZATION.tick_announce();
 
-            TV_LOCALIZATION.label_next_interval("Approx max VV");
-            TV_LOCALIZATION.tick();
+            //TV_LOCALIZATION.label_next_interval("Approx max VV");
+            //TV_LOCALIZATION.tick();
             // Hack: assume first measurement is sufficient for all subsequent partitions
             if (max_allocated_VV == 0) {
                 max_VV_local = get_approx_max_VV_partitioned(*TV_local,
@@ -802,7 +803,7 @@ void * parallel_work(void *parallel_arguments) {
             else {
                 max_VV_local = max_allocated_VV;
             }
-            TV_LOCALIZATION.tick_announce();
+            //TV_LOCALIZATION.tick_announce();
             if (_my_args.debug > NO_DEBUG) {
                 out << INFO_EMOJI << timername << " works on partition "
                     << my_partition_id << " with " << n_points << " points and "
@@ -1106,6 +1107,7 @@ void * parallel_work(void *parallel_arguments) {
             delete TV_local;
         }
     }
+    thread_time.tick_announce();
     // Free allocated memory
     sprintf(intervalname, "%s Free memory", timername);
     timer.label_next_interval(intervalname);
