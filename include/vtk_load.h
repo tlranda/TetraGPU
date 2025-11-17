@@ -9,6 +9,8 @@
 #include "argparse.h"
 #include "datatypes.h"
 #include "emoji.h"
+// Metrics to time precompute section
+#include "metrics.h"
 // STL
 #include <set>
 

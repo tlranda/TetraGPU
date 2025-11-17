@@ -21,6 +21,8 @@ __global__ void dummy_kernel(void) {
 #define REGULAR_CLASS 3
 #define SADDLE_CLASS  4
 
+// # define GRANULAR_TIMING
+
 //*
 #define TID_SELECTION (blockDim.x * blockIdx.x) + threadIdx.x
 #define PRINT_ON 0
@@ -558,11 +560,14 @@ void * parallel_work(void *parallel_arguments) {
     }
     std::ostream out(output_buffer);
 
-    // Set up parallel timer
-    char timername[32], intervalname[128];
+    char timername[32];
     sprintf(timername, "Parallel worker %02d", gpu_id);
+    #ifdef GRANULAR_TIMING
+    // Set up parallel timer
+    char intervalname[128];
     Timer timer(true, timername, _my_args.debug == NO_DEBUG);
     Timer thread_time(false, timername, false);
+    #endif
 
     // Establish GPU to utilize and allocate a stream for its operations
     int actual_gpus, vgpu_id, my_partition_id = gpu_id;
@@ -601,8 +606,13 @@ void * parallel_work(void *parallel_arguments) {
     vtkIdType * dense_ivvi_host;
     size_t dense_cpc_size = (3*TV->nPoints)*sizeof(unsigned int),
            dense_ivvi_size = (TV->nPoints)*sizeof(vtkIdType);
-    std::cout << "Set dense CPC size for " << TV->nPoints << " points (3 classes per point, " << 3*TV->nPoints << " entries)" << std::endl;
-    std::cout << "Set dense IVVI size for " << TV->nPoints << " points" << std::endl;
+    if (_my_args.debug >= DEBUG_MIN) {
+        std::cout << "Set dense CPC size for " << TV->nPoints
+                  << " points (3 classes per point, " << 3*TV->nPoints
+                  << " entries)" << std::endl
+                  << "Set dense IVVI size for " << TV->nPoints << " points"
+                  << std::endl;
+    }
     CUDA_ASSERT(cudaMallocHost((void**)&dense_CPCs, dense_cpc_size));
     bzero(dense_CPCs, 3*TV->nPoints);
     CUDA_ASSERT(cudaMallocHost((void**)&dense_ivvi_host, dense_ivvi_size));
@@ -648,10 +658,12 @@ void * parallel_work(void *parallel_arguments) {
     for (std::pair<int, int> part_meta : partition_metadata) {
         my_partition_id = part_meta.second;
         // TV-localization
+        #ifdef GRANULAR_TIMING
         sprintf(intervalname, "%s TV localization for partition %d",
                 timername, my_partition_id);
         timer.label_next_interval(intervalname);
         timer.tick();
+        #endif
         TV_Data * TV_local;
         int max_VV_local;
         // Have to preserve relative vertex ID ordering for semantic consistency
@@ -683,9 +695,11 @@ void * parallel_work(void *parallel_arguments) {
                          "both arrays are identity!" << std::endl;
         }
         else {
-            //Timer TV_LOCALIZATION(true, "TV Localization");
-            //TV_LOCALIZATION.label_next_interval("Determine points and cells");
-            //TV_LOCALIZATION.tick();
+            #ifdef GRANULAR_TIMING
+            Timer TV_LOCALIZATION(true, "TV Localization");
+            TV_LOCALIZATION.label_next_interval("Determine points and cells");
+            TV_LOCALIZATION.tick();
+            #endif
             // START TV LOCALIZATION -- THIS TAKES A WHILE
             // Determine the number of points and cells
             vtkIdType n_points = 0, n_cells = 0;
@@ -715,9 +729,11 @@ void * parallel_work(void *parallel_arguments) {
                     }
                 }
             }
-            //TV_LOCALIZATION.tick_announce();
-            //TV_LOCALIZATION.label_next_interval("Point remapping");
-            //TV_LOCALIZATION.tick();
+            #ifdef GRANULAR_TIMING
+            TV_LOCALIZATION.tick_announce();
+            TV_LOCALIZATION.label_next_interval("Point remapping");
+            TV_LOCALIZATION.tick();
+            #endif
 
             // Now all included points and cells are known -- make stable remapping
             std::map<vtkIdType, vtkIdType> partition_remapping;
@@ -730,9 +746,11 @@ void * parallel_work(void *parallel_arguments) {
             }
             // This is correct, save an operation or two
             inverse_partition_mapping = std::move(stable_vertices);
-            //TV_LOCALIZATION.tick_announce();
-            //TV_LOCALIZATION.label_next_interval("TV cell remapping via VVI and IVVI");
-            //TV_LOCALIZATION.tick();
+            #ifdef GRANULAR_TIMING
+            TV_LOCALIZATION.tick_announce();
+            TV_LOCALIZATION.label_next_interval("TV cell remapping via VVI and IVVI");
+            TV_LOCALIZATION.tick();
+            #endif
             // Write the cells using localized indices
             if (static_cast<vtkIdType>(included_points.size()) > max_allocated_points) {
                 if (_my_args.debug > DEBUG_MIN) {
@@ -756,13 +774,17 @@ void * parallel_work(void *parallel_arguments) {
                 sparse_vvi[nth_point++] = point;
             }
 
-            //TV_LOCALIZATION.tick_announce();
+            #ifdef GRANULAR_TIMING
+            TV_LOCALIZATION.tick_announce();
+            #endif
 
             n_points = included_points.size();
             n_cells = cells.size();
 
-            //TV_LOCALIZATION.label_next_interval("Partition and Vertex remapping");
-            //TV_LOCALIZATION.tick();
+            #ifdef GRANULAR_TIMING
+            TV_LOCALIZATION.label_next_interval("Partition and Vertex remapping");
+            TV_LOCALIZATION.tick();
+            #endif
             double * localVertexAttributes = new double[n_points];
             int * partition_IDs = new int[n_points];
             // Now fetch data for partition inclusion and scalars using inv map
@@ -773,11 +795,15 @@ void * parallel_work(void *parallel_arguments) {
                 partition_IDs[nth_point] = (TV->partitionIDs[vertex] == my_partition_id);
                 localVertexAttributes[nth_point++] = TV->vertexAttributes[vertex];
             }
-            //TV_LOCALIZATION.tick_announce();
+            #ifdef GRANULAR_TIMING
+            TV_LOCALIZATION.tick_announce();
+            #endif
 
             // Set TV_local using localized data
-            //TV_LOCALIZATION.label_next_interval("Setup TV_local object");
-            //TV_LOCALIZATION.tick();
+            #ifdef GRANULAR_TIMING
+            TV_LOCALIZATION.label_next_interval("Setup TV_local object");
+            TV_LOCALIZATION.tick();
+            #endif
             TV_local = new TV_Data(n_points, n_cells);
             // Localized only includes binary partition (IN|OUT)
             TV_local->n_partitions = 2;
@@ -789,10 +815,11 @@ void * parallel_work(void *parallel_arguments) {
             }
             TV_local->partitionIDs = partition_IDs;
             TV_local->vertexAttributes = localVertexAttributes;
-            //TV_LOCALIZATION.tick_announce();
-
-            //TV_LOCALIZATION.label_next_interval("Approx max VV");
-            //TV_LOCALIZATION.tick();
+            #ifdef GRANULAR_TIMING
+            TV_LOCALIZATION.tick_announce();
+            TV_LOCALIZATION.label_next_interval("Approx max VV");
+            TV_LOCALIZATION.tick();
+            #endif
             // Hack: assume first measurement is sufficient for all subsequent partitions
             if (max_allocated_VV == 0) {
                 max_VV_local = get_approx_max_VV_partitioned(*TV_local,
@@ -803,7 +830,9 @@ void * parallel_work(void *parallel_arguments) {
             else {
                 max_VV_local = max_allocated_VV;
             }
-            //TV_LOCALIZATION.tick_announce();
+            #ifdef GRANULAR_TIMING
+            TV_LOCALIZATION.tick_announce();
+            #endif
             if (_my_args.debug > NO_DEBUG) {
                 out << INFO_EMOJI << timername << " works on partition "
                     << my_partition_id << " with " << n_points << " points and "
@@ -831,12 +860,16 @@ void * parallel_work(void *parallel_arguments) {
             }
             max_VV_local = max_VV_override;
         }
+        #ifdef GRANULAR_TIMING
         timer.tick_announce();
+        #endif
 
         // Data Sizes & Allocations for VV
+        #ifdef GRANULAR_TIMING
         sprintf(intervalname, "%s VV setup", timername);
         timer.label_next_interval(intervalname);
         timer.tick();
+        #endif
         // Subsize within allocation OR new required allocation size
         size_t tv_flat_size = sizeof(vtkIdType) * TV_local->nCells * nbVertsInCell,
                vv_size = sizeof(vtkIdType) * TV_local->nPoints * max_VV_local,
@@ -925,10 +958,12 @@ void * parallel_work(void *parallel_arguments) {
                 << " should auto-exit (" << (thread_block_size.x * grid_size.x) - n_to_compute
                 << ")" << std::endl;
         }
+        #ifdef GRANULAR_TIMING
         timer.tick_announce();
         char kerneltimername[32];
         sprintf(kerneltimername, "Parallel %s kernel %02d", "VV", gpu_id);
         Timer vvKernel(false, kerneltimername, _my_args.debug == NO_DEBUG);
+        #endif
         KERNEL_WARN(VV_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
                                 thread_block_size KERNEL_LAUNCH_SEPARATOR
                                 0 /* shmem */ KERNEL_LAUNCH_SEPARATOR
@@ -941,10 +976,13 @@ void * parallel_work(void *parallel_arguments) {
                                     vv_index,
                                     vv_computed));
         // Only synchronized to ensure VV kernel duration is appropriately tracked
+        #ifdef GRANULAR_TIMING
+        // NO SYNC unless timing granularly -- ONLY want this for discrete kernel timing!
         CUDA_WARN(cudaStreamSynchronize(thread_stream));
         vvKernel.tick();
         sprintf(intervalname, "%s VV kernel duration", timername);
         vvKernel.label_prev_interval(intervalname);
+        #endif
         /*
         // DEBUG: Check that every point in VV is properly found
         full_check_VV_Host(vv_size, vv_index_size, vvi_size, dense_ivvi_size,
@@ -955,9 +993,11 @@ void * parallel_work(void *parallel_arguments) {
         // NOTE: Asynchronous WRT CPU, we can continue to setup SFCP kernel while VV runs
 
         // Additional allocations and settings for SFCP kernel
+        #ifdef GRANULAR_TIMING
         sprintf(intervalname, "%s Setup for SFCP kernel", timername);
         timer.label_next_interval(intervalname);
         timer.tick();
+        #endif
 
         // TODO: Convert valence allocation to max_VV_local ints of SHMEM?
         size_t valence_size = sizeof(int) * TV_local->nPoints * max_VV_local,
@@ -966,8 +1006,6 @@ void * parallel_work(void *parallel_arguments) {
         // SHMEM size in kernel is NOT allocated by driver code, so let this
         // be set for each partition
         const size_t shared_mem_size = (sizeof(unsigned int) * 2) + (sizeof(vtkIdType) * max_VV_local);
-        // Abundance of caution but should be unnecessary:
-        CUDA_WARN(cudaStreamSynchronize(thread_stream));
 
         // First-touch allocate or reallocate
         if ((max_VV_local * TV_local->nPoints) > (max_allocated_SFCP_points * max_allocated_SFCP_VV)) {
@@ -998,13 +1036,8 @@ void * parallel_work(void *parallel_arguments) {
         // We need CPCs to be zero'd out
         CUDA_WARN(cudaMemsetAsync(device_valences, 0, valence_size, thread_stream));
         CUDA_WARN(cudaMemsetAsync(device_CPCs, 0, cpc_size, thread_stream));
-        CUDA_WARN(cudaStreamSynchronize(thread_stream));
-        timer.tick_announce();
 
         // Critical Points
-        sprintf(intervalname, "%s Run " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm", timername);
-        timer.label_next_interval(intervalname);
-        timer.tick();
         // RESET KERNEL PARAMETERS
         n_to_compute = TV_local->nPoints * max_VV_local;
         thread_block_size.x = max_VV_local;
@@ -1020,8 +1053,16 @@ void * parallel_work(void *parallel_arguments) {
                 << " units of work (" << grid_size.x << " blocks, "
                 << thread_block_size.x << " threads per block)" << std::endl;
         }
+        #ifdef GRANULAR_TIMING
+        // ONLY sync to increase reliability of kernel timing
+        CUDA_WARN(cudaStreamSynchronize(thread_stream));
+        timer.tick_announce();
+        sprintf(intervalname, "%s Run " CYAN_COLOR "Critical Points" RESET_COLOR " algorithm", timername);
+        timer.label_next_interval(intervalname);
+        timer.tick();
         sprintf(kerneltimername, "Parallel %s kernel %02d", "SFCP", gpu_id);
         Timer sfcpKernel(false, kerneltimername, _my_args.debug == NO_DEBUG);
+        #endif
         KERNEL_WARN(critPoints<<<grid_size KERNEL_LAUNCH_SEPARATOR
                                  thread_block_size KERNEL_LAUNCH_SEPARATOR
                                  shared_mem_size KERNEL_LAUNCH_SEPARATOR
@@ -1035,6 +1076,7 @@ void * parallel_work(void *parallel_arguments) {
                                                   dev_vvi,              // Localized size
                                                   dev_ivvi,             // GLOBAL SIZE
                                                   device_CPCs));        // Localized size
+        #ifdef GRANULAR_TIMING
         CUDA_WARN(cudaStreamSynchronize(thread_stream)); // Make algorithm timing accurate
         sfcpKernel.tick();
         sprintf(intervalname, "%s SFCP kernel", timername);
@@ -1043,6 +1085,7 @@ void * parallel_work(void *parallel_arguments) {
         sprintf(intervalname, "%s Retrieve results from GPU", timername);
         timer.label_next_interval(intervalname);
         timer.tick();
+        #endif
         // In the event 0-values are intended, zero out the buffer PRIOR to copying?
         memset(host_CPCs, 0, cpc_size);
         // Synchronous wrt this thread, not others
@@ -1068,7 +1111,7 @@ void * parallel_work(void *parallel_arguments) {
                 dense_CPCs[dense_basis  ] = host_CPCs[host_basis  ];
                 dense_CPCs[dense_basis+1] = host_CPCs[host_basis+1];
                 dense_CPCs[dense_basis+2] = host_CPCs[host_basis+2];
-                // DEBUG: Announce values
+                // DEBUG: Announce / Check values
                 /*
                 out << "Set dense CPCs values for point " << i << " between indices "
                     << dense_basis << "-" << dense_basis+2 << " (values: "
@@ -1102,16 +1145,20 @@ void * parallel_work(void *parallel_arguments) {
                 */
             }
         }
+        #ifdef GRANULAR_TIMING
         timer.tick_announce();
+        #endif
         if (!_my_args.no_partitioning) {
             delete TV_local;
         }
     }
+    #ifdef GRANULAR_TIMING
     thread_time.tick_announce();
     // Free allocated memory
     sprintf(intervalname, "%s Free memory", timername);
     timer.label_next_interval(intervalname);
     timer.tick();
+    #endif
     if (dense_ivvi_host != nullptr) CUDA_WARN(cudaFreeHost(dense_ivvi_host));
     if (sparse_vvi != nullptr) CUDA_WARN(cudaFreeHost(sparse_vvi));
     if (dev_vvi != nullptr) CUDA_WARN(cudaFree(dev_vvi));
@@ -1127,7 +1174,9 @@ void * parallel_work(void *parallel_arguments) {
     if (host_CPCs != nullptr && !_my_args.no_partitioning) CUDA_WARN(cudaFreeHost(host_CPCs));
     if (device_CPCs != nullptr) CUDA_WARN(cudaFree(device_CPCs));
     if (device_scalar_values != nullptr) CUDA_WARN(cudaFree(device_scalar_values));
+    #ifdef GRANULAR_TIMING
     timer.tick_announce();
+    #endif
     return (void*)dense_CPCs;
 }
 
@@ -1138,8 +1187,9 @@ int main(int argc, char *argv[]) {
     parse(argc, argv, args);
     timer.tick();
     timer.interval("Argument parsing");
-    std::cout << std::endl << std::endl;
-
+    if (args.debug >= DEBUG_MIN) {
+        std::cout << std::endl << std::endl;
+    }
 
     // GPU intializations
     timer.label_next_interval(RED_COLOR "Create CUDA Contexts on all GPUs" RESET_COLOR);
@@ -1155,8 +1205,9 @@ int main(int argc, char *argv[]) {
         CUDA_ASSERT(cudaDeviceSynchronize());
     }
     timer.tick_announce();
-    if (args.debug > NO_DEBUG) std::cout << std::endl << std::endl;
-
+    if (args.debug > NO_DEBUG) {
+        std::cout << std::endl << std::endl;
+    }
 
     /* Utilize VTK API to load the entire mesh once (read-accessible to all threads),
        should de-allocate VTK's heap as much as possible as function closes
@@ -1172,8 +1223,9 @@ int main(int argc, char *argv[]) {
     timer.tick();
     std::shared_ptr<TV_Data> TV = get_TV_from_VTK(args);
     timer.tick_announce();
-    std::cout << std::endl << std::endl;
-
+    if (args.debug >= DEBUG_MIN) {
+        std::cout << std::endl << std::endl;
+    }
 
     Timer all_critical_points(false, "ALL Critical Points");
     // Parallelization
@@ -1181,14 +1233,17 @@ int main(int argc, char *argv[]) {
     if (args.no_partitioning) {
         n_parallel = 1;
     }
-    std::cout << PUSHPIN_EMOJI << "Parallelizing across " << n_parallel
-              << " threads" << std::endl;
+    if (args.debug >= DEBUG_MIN) {
+        std::cout << PUSHPIN_EMOJI << "Parallelizing across " << n_parallel
+                  << " threads" << std::endl;
+    }
     pthread_t threads[n_parallel];
     thread_arguments thread_args[n_parallel];
     unsigned int * return_vals[n_parallel];
     for (int i = 0; i < n_parallel; i++) {
         if (args.debug > DEBUG_MIN) {
-            std::cout << INFO_EMOJI << "Make thread GPU " << i << " ready" << std::endl;
+            std::cout << INFO_EMOJI << "Make thread GPU " << i << " ready"
+                      << std::endl;
         }
         thread_args[i] = thread_arguments(i, n_parallel, TV, args.max_VV, args);
         pthread_create(&threads[i], NULL, parallel_work, (void*)&thread_args[i]);
@@ -1218,6 +1273,7 @@ int main(int argc, char *argv[]) {
         // Merge results
         for (int j = 0; j < (3*TV->nPoints); j++) {
             if (return_val[j] != 0) {
+                // Double-write indicator
                 if (returned_values[j] != 0) {
                     /*
                     std::cerr << "DOUBLE WRITE TO POINT " << j / 3
@@ -1241,6 +1297,7 @@ int main(int argc, char *argv[]) {
                         exit(EXIT_FAILURE);
                     }
                 }
+                // First write
                 returned_values[j] = return_val[j];
             }
         }
@@ -1248,7 +1305,10 @@ int main(int argc, char *argv[]) {
         CUDA_ASSERT(cudaFreeHost(return_val));
         return_vals[i] = nullptr;
     }
-    std::cout << std::endl << std::endl;
+    all_critical_points.tick_announce();
+    if (args.debug >= DEBUG_MIN) {
+        std::cout << std::endl << std::endl;
+    }
 
     timer.label_next_interval("Full results");
     timer.tick();
@@ -1261,9 +1321,7 @@ int main(int argc, char *argv[]) {
                        (*TV),
                        args);
     }
-    delete[] returned_values;
-    // Close timers
     timer.tick_announce();
-    all_critical_points.tick_announce();
+    delete[] returned_values;
 }
 

@@ -153,6 +153,7 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
     data->vertexAttributes = copyVertexAttributes;
 
     // Retrieve partitioning IDs
+    Timer vtkTimer(false, "VTK Preprocessing");
     if (args.partitioningname == "") {
         // Default everything into a single partition
         int * meshPartitionIDs = new int[nPoints]();
@@ -193,6 +194,7 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
         data->partitionIDs = meshPartitionIDs;
         data->n_per_partition = mesh_n_per_partition;
     }
+    vtkTimer.tick_announce();
 
     return data;
 }
