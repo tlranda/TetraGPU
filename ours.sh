@@ -19,7 +19,8 @@ ncpus=$( lscpu | grep -e "^CPU(s):" | awk '{print $NF}' );
 full_subscribe=1; # No CPU parallelism, really
 echo "Execute on host ${HOSTNAME}";
 nvidia-smi;
-echo "NCPUS: ${ncpus}";
+ngpus=$( nvidia-smi -L | wc -l );
+echo "NCPUS: ${ncpus} | NGPUS: ${ngpus}";
 echo "Full subscribe: ${full_subscribe}";
 
 mkdir -p ${HOSTNAME}_outputs;
@@ -63,25 +64,28 @@ for ds in ${datasets[@]}; do
     fi;
     # Array selected; proceed
     echo -e "\tUsing array: ${used_array}";
-    cmd="build_${HOSTNAME}/./main --input ${ds} --arrayname ${used_array} -p _index -d 1 -t ${full_subscribe} --export /dev/null";
+    cmd="build_${HOSTNAME}/./main --input ${ds} --arrayname ${used_array} -p _index -d 0 -t ${full_subscribe} --export /dev/null";
     limit_size="${memory_limits[$ds]}";
     if [[ "${limit_size}" != "N" ]]; then
         cmd="${cmd} --max_VV ${limit_size}";
         echo -e "\tLimiting max adjacency to ${limit_size}";
     fi;
-    for iteration in `seq 1 ${n_repeats}`; do
-        to_make="${HOSTNAME}_outputs/${shortname}_${full_subscribe}CPUS_iter_${iteration}.output";
-        if [[ ! -e "${to_make}" || ${override} == 1 ]]; then
-            full_command="${cmd} > ${to_make}";
-            echo "${full_command}";
-            cmd_rval=$(eval "${full_command}");
-            if [[ ${cmd_rval} -ne 0 ]]; then
-                echo "BAD EXIT CODE: ${cmd_rval}";
-                break;
+    for gpu_count in `seq 1 $ngpus`; do
+        base_cmd="${cmd} -g ${gpu_count}";
+        for iteration in `seq 1 ${n_repeats}`; do
+            to_make="${HOSTNAME}_outputs/${shortname}_${gpu_count}_GPUS_${full_subscribe}CPUS_iter_${iteration}.output";
+            if [[ ! -e "${to_make}" || ${override} == 1 ]]; then
+                full_command="${cmd} > ${to_make}";
+                echo "${full_command}";
+                cmd_rval=$(eval "${full_command}");
+                if [[ ${cmd_rval} -ne 0 ]]; then
+                    echo "BAD EXIT CODE: ${cmd_rval}";
+                    break;
+                fi;
+            else
+                echo "${to_make} exists, skipping...";
             fi;
-        else
-            echo "${to_make} exists, skipping...";
-        fi;
+        done;
     done;
 done;
 # Analyze all captured traces
