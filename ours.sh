@@ -25,25 +25,34 @@ echo "Full subscribe: ${full_subscribe}";
 
 mkdir -p ${HOSTNAME}_outputs;
 
-datasets=$( ls -d datasets/*.vtu );
+#datasets=$( ls -d datasets/*.vtu );
+datasets=( datasets/Bucket_8.vtu
+           datasets/Engine_8.vtu
+           datasets/viscousFingering_8.vtu
+           datasets/Foot_8.vtu
+           datasets/Fish_8.vtu
+           datasets/Asteroid_8.vtu
+           datasets/Hole_8.vtu
+           datasets/ctBones_8pt.vtu
+           datasets/Stent_8pt.vtu);
 declare -A target_array=( [datasets/Bucket_8.vtu]=Result
-                          [datasets/viscousFingering_8.vtu]=concentration
-                          [datasets/ctBones_8pt.vtu]=Scalars_
                           [datasets/Engine_8.vtu]=Scalars_
+                          [datasets/viscousFingering_8.vtu]=concentration
                           [datasets/Foot_8.vtu]=Scalars_
                           [datasets/Fish_8.vtu]=Elevation
                           [datasets/Asteroid_8.vtu]=scalar
                           [datasets/Hole_8.vtu]=Result
+                          [datasets/ctBones_8pt.vtu]=Scalars_
                           [datasets/Stent_8pt.vtu]=Scalars_
                          );
 declare -A memory_limits=( [datasets/Bucket_8.vtu]=N
-                           [datasets/viscousFingering_8.vtu]=N
-                           [datasets/ctBones_8pt.vtu]=N #78
                            [datasets/Engine_8.vtu]=N
+                           [datasets/viscousFingering_8.vtu]=N
                            [datasets/Foot_8.vtu]=N
                            [datasets/Fish_8.vtu]=N
                            [datasets/Asteroid_8.vtu]=N
                            [datasets/Hole_8.vtu]=N #151
+                           [datasets/ctBones_8pt.vtu]=N #78
                            [datasets/Stent_8pt.vtu]=N #73
                           );
 for ds in ${datasets[@]}; do
@@ -75,7 +84,7 @@ for ds in ${datasets[@]}; do
         for iteration in `seq 1 ${n_repeats}`; do
             to_make="${HOSTNAME}_outputs/${shortname}_${gpu_count}_GPUS_${full_subscribe}CPUS_iter_${iteration}.output";
             if [[ ! -e "${to_make}" || ${override} == 1 ]]; then
-                full_command="${cmd} > ${to_make}";
+                full_command="${base_cmd} > ${to_make}";
                 echo "${full_command}";
                 cmd_rval=$(eval "${full_command}");
                 if [[ ${cmd_rval} -ne 0 ]]; then
@@ -86,8 +95,8 @@ for ds in ${datasets[@]}; do
                 echo "${to_make} exists, skipping...";
             fi;
         done;
+        # Analyze all captured traces
+        python3 processours.py ${HOSTNAME}_outputs/${shortname}_${gpu_count}_GPUS*.output;
     done;
 done;
-# Analyze all captured traces
-python3 processours.py ${HOSTNAME}_outputs/*.output;
 
