@@ -33,8 +33,10 @@ def export_specific(args):
             print(f"Still failed to read")
             raise
     if args.list_arrays:
-        print(f"Found {len(mesh.point_data)} arrays")
+        print(f"Found {len(mesh.point_data)} point arrays")
         print("\t-"+"\n\t-".join(mesh.point_data.keys()))
+        print(f"Found {len(mesh.cell_data)} cell arrays")
+        print("\t-"+"\n\t-".join(mesh.cell_data.keys()))
         return
     saveable_point_data = {}
     for key in args.keep_arrays:
@@ -49,15 +51,13 @@ def export_specific(args):
         #mesh.cell_data[f'partition_{}_external'] = [0 if _ not in within_partition_points else 1 for _ in mesh.points]
         partitions = sorted(set(mesh.point_data['_index']))
         for (pid, partition) in enumerate(partitions):
-            within_partition_points = np.where(mesh.point_data['_index'] == partition)[0]
-            included_cells = list()
-            for (cid, cell_slice_start) in enumerate(range(0,len(mesh.point_data['_index']),4)):
-                if partition in mesh.point_data['_index'][cell_slice_start:cell_slice_start+4]:
-                    included_cells.append(cid)
-            mesh.cell_sets[f'partition_cells_{pid}'] = included_cells
-            break
-    import pdb
-    pdb.set_trace()
+            within_partition = np.where(mesh.point_data['_index'] == partition)[0]
+            n_cells = len(mesh.cells[0])
+            inclusion = np.zeros(n_cells)
+            for cid, cell in enumerate(mesh.cells[0].data):
+                if any((vertex in within_partition for vertex in cell)):
+                    inclusion[cid] = 1
+            mesh.cell_data[f'partition_cells_{pid}'] = [inclusion]
     mesh.write(args.export)
 
 def build():

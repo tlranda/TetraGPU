@@ -68,7 +68,8 @@ struct TV_Data {
     // These vectors are std::move()'d to, rather than being initialized
     double * vertexAttributes;
     int * partitionIDs,
-        * n_per_partition;
+        * n_per_partition,
+        * partitionCells;
 
     TV_Data(vtkIdType _points, vtkIdType _cells) {
         nPoints = _points;
@@ -78,6 +79,7 @@ struct TV_Data {
         vertexAttributes = nullptr;
         partitionIDs = nullptr;
         n_per_partition = nullptr;
+        partitionCells = nullptr;
     }
     ~TV_Data(void) {
         if (cells != nullptr) {
@@ -91,6 +93,9 @@ struct TV_Data {
         }
         if (n_per_partition != nullptr) {
             delete[] n_per_partition;
+        }
+        if (partitionCells != nullptr) {
+            delete[] partitionCells;
         }
     }
 };

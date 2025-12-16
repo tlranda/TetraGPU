@@ -4,6 +4,7 @@
 #include <pthread.h> // POSIX CPU thread parallelism
 #include <numeric> // Vector accumulation
 #include <functional> // Comparison std::greater
+#include <parallel/algorithm> // __gnu_parallel::sort()
 // Other files in this repository
 #include "argparse.h" // Arguments and parse() -- to be swapped out!
 #include "vtk_load.h" // TV_Data type and get_TV_from_VTK()

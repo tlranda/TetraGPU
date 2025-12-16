@@ -130,18 +130,18 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
         std::cerr << EXCLAIM_EMOJI << "Unable to retrieve point data from the dataset" << std::endl;
         exit(EXIT_FAILURE);
     }
-    std::cout << "Has " << pd->GetNumberOfArrays() << " arrays" << std::endl;
+    std::cout << "Has " << pd->GetNumberOfArrays() << " point arrays" << std::endl;
     int use_this_array = -1;
     for (int i = 0; i < pd->GetNumberOfArrays(); i++) {
-        std::cout << "\tArray " << i << " is named " << (pd->GetArrayName(i) ? pd->GetArrayName(i) : "NULL (not specified)") << std::endl;
+        std::cout << "\tPoint Array " << i << " is named " << (pd->GetArrayName(i) ? pd->GetArrayName(i) : "NULL (not specified)") << std::endl;
         if (use_this_array == -1 && args.arrayname != "" && pd->GetArrayName(i) == args.arrayname) {
             use_this_array = i;
-            std::cout << "Found user's requested array: " << args.arrayname << std::endl;
+            std::cout << "Found user's requested point array for vertex attributes: " << args.arrayname << std::endl;
         }
     }
     if (use_this_array == -1) {
         use_this_array = 0;
-        std::cout << "Auto select 0th array: " << pd->GetArrayName(0) << std::endl;
+        std::cout << "Auto select 0th point array as vertex attributes: " << pd->GetArrayName(0) << std::endl;
     }
     vtkDataArray* vertexAttributes = pd->GetArray(use_this_array);
     if (!vertexAttributes) {
@@ -193,6 +193,49 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
         std::cout << "Using " << data->n_partitions << " partitions from " << args.partitioningname << std::endl;
         data->partitionIDs = meshPartitionIDs;
         data->n_per_partition = mesh_n_per_partition;
+    }
+
+    // Retrieve cell data
+    if (data->n_partitions == 1) {
+        std::cout << "No cell data retrieval for cell partition data" << std::endl;
+    }
+    else {
+        vtkCellData* cd = unstructuredGrid->GetCellData();
+        if (!cd) {
+            std::cerr << EXCLAIM_EMOJI << "Unable to retrieve cell data from the dataset" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+        std::cout << "Has " << cd->GetNumberOfArrays() << " cell arrays" << std::endl;
+        data->partitionCells = new int[data->n_partitions * data->nCells];
+        int * pointer = data->partitionCells;
+        for (int p = 0; p < data->n_partitions; p++) {
+            char search[32] = {0};
+            sprintf(search, "partition_cells_%d", p);
+            std::cout << "Searching for array: " << search << std::endl;
+            bool found = false;
+            for (int i = 0; i < cd->GetNumberOfArrays(); i++) {
+                const char * arrayName = cd->GetArrayName(i);
+                if (p == 0) {
+                    std::cout << "\tCell Array " << i << " is named " << (arrayName ? arrayName : "NULL (not specified)") << std::endl;
+                }
+                if (strcmp(search, arrayName) == 0) {
+                    std::cout << "Copying cell data array " << arrayName << " for partition " << p << std::endl;
+                    vtkDataArray* cellInfo = cd->GetArray(i);
+                    for (int c = 0; c < data->nCells; c++) {
+                        *pointer = cellInfo->GetTuple1(c);
+                        pointer++;
+                    }
+                    found = true;
+                }
+            }
+            if (!found) {
+                // Cannot use partial / missing data
+                std::cerr << WARN_EMOJI << "Failed to find partition cells (cellData) array " << search << ", falling back to slower CPU-side precompute" << std::endl;
+                delete[] data->partitionCells;
+                data->partitionCells = nullptr;
+                break;
+            }
+        }
     }
     vtkTimer.tick_announce();
 

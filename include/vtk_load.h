@@ -5,6 +5,7 @@
 #include <vtkUnstructuredGrid.h>
 #include <vtkXMLUnstructuredGridReader.h>
 #include <vtkPointData.h>
+#include <vtkCellData.h>
 // Arguments
 #include "argparse.h"
 #include "datatypes.h"

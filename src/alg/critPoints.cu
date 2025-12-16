@@ -21,7 +21,7 @@ __global__ void dummy_kernel(void) {
 #define REGULAR_CLASS 3
 #define SADDLE_CLASS  4
 
-// # define GRANULAR_TIMING
+#define GRANULAR_TIMING
 
 //*
 #define TID_SELECTION (blockDim.x * blockIdx.x) + threadIdx.x
@@ -66,14 +66,14 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
     */
     const int tid = TID_SELECTION; // Macro defined above kernel
     const vtkIdType indirect_my_1d = tid / max_VV_guess,
-                    my_1d = vvi[indirect_my_1d],
-                    my_2d = VV[tid];
+                    my_2d = VV[tid], // coalesced read
+                    my_1d = vvi[indirect_my_1d]; // block-wide broadcast
     vtkIdType indirect_my_2d;
     if (my_2d < 0 ) {
         execution_mask = false;
     }
     else {
-        indirect_my_2d = ivvi[my_2d];
+        indirect_my_2d = ivvi[my_2d]; // Likely very random memory accesses unless we pre-package on CPU
     }
 
     if (VV_index[indirect_my_1d] <= 0 || partition[indirect_my_1d] == 0) {
@@ -119,13 +119,15 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
     int my_class;
     vtkIdType min_my_1d, max_my_1d;
     if (execution_mask) {
+        // SV[im1d] is a block-wide broadcast
+        // SV[im2d] is broadly varied and cannot be guaranteed to do much of any memory-transaction-useful behavior in current layout
         my_class = 1 - (
                         (scalar_values[indirect_my_2d] == scalar_values[indirect_my_1d] ?
                             my_2d < my_1d :
                             scalar_values[indirect_my_2d] < scalar_values[indirect_my_1d])
                         << 1);
         // Allow other threads in the block to read your class for matching
-        // Not SHMEM yet -- could be as there are no cross-block reads here
+        // valences[] is not SHMEM yet -- could be as there are no cross-block reads here
         valences[tid] = my_class;
         min_my_1d = (indirect_my_1d * max_VV_guess);
         max_my_1d = min_my_1d + VV_index[indirect_my_1d];
@@ -188,11 +190,12 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
                     threadIdx.x, to_converge);
             #endif
 
-            // Union-Find iteration
+            // Union-Find iterations focus on shmem manipulation
             for(vtkIdType i = min_my_1d; i < max_my_1d; i++) {
                 // Find a matching valence
-                const vtkIdType candidate_component_2d = VV[i],
-                                indirect_candidate_component_2d = ivvi[candidate_component_2d];
+                const vtkIdType candidate_component_2d = VV[i], // Block-broadcast
+                                indirect_candidate_component_2d = ivvi[candidate_component_2d]; // Uncoalesced memory access
+                // Warps may diverge, but there are only two classes so they can only split once here
                 if (i != tid && valences[i] == my_class) {
                     const vtkIdType start_2d = indirect_candidate_component_2d*max_VV_guess,
                                     stop_2d  = start_2d + VV_index[indirect_candidate_component_2d];
@@ -210,6 +213,8 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
                     #endif
                     /* Do you see your 2d in their 2d? If so, update your
                        neighborhood with the minimum of your two points
+
+                       Lots more divergence possible here, but we try to keep it short-lived
                     */
                     for(vtkIdType j = start_2d; j < stop_2d; j++) {
                         const vtkIdType theirNeighborhood = neighborhood[i-min_my_1d];
@@ -254,6 +259,8 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
     /*
        4) Each root of each component increments the counter for its class to
             contribute to the final classification of the per-block point
+
+      Small divergence necessary here, it is short-lived and we're doing atomics anyways
     */
     if (execution_mask && neighborhood[threadIdx.x] == my_2d) {
         const vtkIdType memoffset = ((indirect_my_1d*3)+((my_class+1)/2));
@@ -646,7 +653,7 @@ void * parallel_work(void *parallel_arguments) {
         }
     }
     // Sort for traversal order (DESCENDING -- should limit need for reallocs)
-    std::sort(partition_metadata.rbegin(), partition_metadata.rend());
+    __gnu_parallel::sort(partition_metadata.rbegin(), partition_metadata.rend());
     max_in_partition = partition_metadata[0].first;
     if (_my_args.debug > NO_DEBUG) {
         out << INFO_EMOJI << timername << " works on at most "
@@ -668,8 +675,7 @@ void * parallel_work(void *parallel_arguments) {
         int max_VV_local;
         // Have to preserve relative vertex ID ordering for semantic consistency
         // between --no_partition and utilizing partitions
-        std::set<vtkIdType> included_points;
-        std::vector<vtkIdType> included_cells, inverse_partition_mapping;
+        std::vector<vtkIdType> inverse_partition_mapping;
 
         // Shortcut available when no partitioning used
         if (_my_args.no_partitioning) {
@@ -700,66 +706,152 @@ void * parallel_work(void *parallel_arguments) {
             TV_LOCALIZATION.label_next_interval("Determine points and cells");
             TV_LOCALIZATION.tick();
             #endif
-            // START TV LOCALIZATION -- THIS TAKES A WHILE
-            // Determine the number of points and cells
-            vtkIdType n_points = 0, n_cells = 0;
             std::vector<std::array<vtkIdType, nbVertsInCell>> cells;
-            // First order inclusion: All points of any tetra with one or more vertices included in partition
-            // MAYBE TODO: Parallelize this and then take union of sets before sorting with stable_vertices?
-            for (vtkIdType cell = 0; cell < TV->nCells; cell++) {
-                vtkIdType i;
-                for (i = 0; i < nbVertsInCell; i++) {
-                    vtkIdType vertex = TV->cells[(cell*nbVertsInCell)+i];
-                    if (TV->partitionIDs[vertex] == my_partition_id) {
-                        // Sentinel break value
-                        i += nbVertsInCell+1;
+            vtkIdType n_points = 0, n_cells = 0;
+            //std::vector<vtkIdType> inverse_partition_mapping;
+            if (TV->partitionCells != nullptr) {
+                // Need to set:
+                // cells
+                int *partition_cells = &(TV->partitionCells[(my_partition_id) * TV->nCells]);
+                std::set<vtkIdType> included_points;
+                for (int i = 0; i < TV->nCells; i++) {
+                    if (partition_cells[i] == 1) {
+                        cells.emplace_back(std::array<vtkIdType,nbVertsInCell>({
+                                    TV->cells[(i*nbVertsInCell)+0],
+                                    TV->cells[(i*nbVertsInCell)+1],
+                                    TV->cells[(i*nbVertsInCell)+2],
+                                    TV->cells[(i*nbVertsInCell)+3],
+                                    }));
+                        included_points.insert(TV->cells[(i*nbVertsInCell)+0]);
+                        included_points.insert(TV->cells[(i*nbVertsInCell)+1]);
+                        included_points.insert(TV->cells[(i*nbVertsInCell)+2]);
+                        included_points.insert(TV->cells[(i*nbVertsInCell)+3]);
                     }
                 }
-                // If sentinel broken
-                if (i > nbVertsInCell) {
-                    included_cells.emplace_back(cell);
-                    cells.emplace_back(std::array<vtkIdType,nbVertsInCell>({
-                                TV->cells[(cell*nbVertsInCell)+0],
-                                TV->cells[(cell*nbVertsInCell)+1],
-                                TV->cells[(cell*nbVertsInCell)+2],
-                                TV->cells[(cell*nbVertsInCell)+3],
-                                }));
-                    for (vtkIdType j = 0; j < nbVertsInCell; j++) {
-                        included_points.insert(TV->cells[(cell*nbVertsInCell)+j]);
-                    }
-                }
+                // inverse_partition_mapping (requires UNIQUE, does NOT require sorting for second-order-traversal version)
+                std::vector<vtkIdType> set_points(included_points.begin(), included_points.end());
+                inverse_partition_mapping = std::move(set_points);
             }
-            #ifdef GRANULAR_TIMING
-            TV_LOCALIZATION.tick_announce();
-            TV_LOCALIZATION.label_next_interval("Point remapping");
-            TV_LOCALIZATION.tick();
-            #endif
+            else {
+                std::vector<vtkIdType> included_cells;
+                // START TV LOCALIZATION -- THIS TAKES A WHILE
+                // Determine the number of points and cells
+                // First order inclusion: All points of any tetra with one or more vertices included in partition
+                std::vector<std::vector<std::array<vtkIdType, nbVertsInCell>>> cells_t(24);
+                std::vector<std::vector<vtkIdType>> included_cells_t(24);
+                std::vector<std::vector<vtkIdType>> points_t(24); // UNSORTED, includes DUPES
+                #pragma omp parallel num_threads(24)
+                {
+                    int tid = omp_get_thread_num();
+                    std::vector<std::array<vtkIdType, nbVertsInCell>> &local_cells = cells_t[tid];
+                    std::vector<vtkIdType> &local_incells = included_cells_t[tid];
+                    std::vector<vtkIdType> &local_points = points_t[tid];
 
-            // Now all included points and cells are known -- make stable remapping
-            std::map<vtkIdType, vtkIdType> partition_remapping;
-            std::vector<vtkIdType> stable_vertices(included_points.begin(), included_points.end());
-            // Sorting is costly but necessary!
-            std::sort(stable_vertices.begin(), stable_vertices.end());
-            vtkIdType nth_point = 0;
-            for (const vtkIdType point : stable_vertices) {
-                partition_remapping.insert({point, nth_point++});
+                    #pragma omp for schedule(static)
+                    for (vtkIdType cell = 0; cell < TV->nCells; cell++) {
+                        vtkIdType i;
+                        for (i = 0; i < nbVertsInCell; i++) {
+                            vtkIdType vertex = TV->cells[(cell*nbVertsInCell)+i];
+                            if (TV->partitionIDs[vertex] == my_partition_id) {
+                                // Sentinel break value
+                                i += nbVertsInCell+1;
+                            }
+                        }
+                        // If sentinel broken
+                        if (i > nbVertsInCell) {
+                            local_incells.emplace_back(cell);
+                            local_cells.emplace_back(std::array<vtkIdType,nbVertsInCell>({
+                                        TV->cells[(cell*nbVertsInCell)+0],
+                                        TV->cells[(cell*nbVertsInCell)+1],
+                                        TV->cells[(cell*nbVertsInCell)+2],
+                                        TV->cells[(cell*nbVertsInCell)+3],
+                                        }));
+                            for (vtkIdType j = 0; j < nbVertsInCell; j++) {
+                                local_points.emplace_back(TV->cells[(cell*nbVertsInCell)+j]);
+                            }
+                        }
+                    }
+                }
+                // MERGE results
+                #ifdef GRANULAR_TIMING
+                TV_LOCALIZATION.tick_announce();
+                // NUMBER TWO MOST COSTLY
+                TV_LOCALIZATION.label_next_interval("Merge");
+                TV_LOCALIZATION.tick();
+                #endif
+
+                // Now all included points and cells are known -- make stable remapping
+                std::map<vtkIdType, vtkIdType> partition_remapping;
+                //cells, included_cells, all defined above
+                std::vector<vtkIdType> stable_vertices; // Will be SORTED and DEDUPED
+                // Reserve rough totals to avoid reallocs
+                Timer Merging(true, "MERGING");
+                Merging.label_next_interval("Alloc");
+                Merging.tick();
+                size_t total_cells = 0,
+                       total_incells = 0,
+                       total_points = 0;
+                for (int t = 0; t < 24; ++t) {
+                    total_cells += cells_t[t].size();
+                    total_incells += included_cells_t[t].size();
+                    total_points += points_t[t].size();
+                }
+                cells.reserve(total_cells);
+                included_cells.reserve(total_incells);
+                stable_vertices.reserve(total_points);
+                Merging.tick_announce();
+                Merging.label_next_interval("Insertion");
+                Merging.tick();
+                for (int t = 0; t < 24; ++t) {
+                    cells.insert(cells.end(),
+                                 std::make_move_iterator(cells_t[t].begin()),
+                                 std::make_move_iterator(cells_t[t].end()));
+                    included_cells.insert(included_cells.end(),
+                                          std::make_move_iterator(included_cells_t[t].begin()),
+                                          std::make_move_iterator(included_cells_t[t].end()));
+                    stable_vertices.insert(stable_vertices.end(),
+                                           std::make_move_iterator(points_t[t].begin()),
+                                           std::make_move_iterator(points_t[t].end()));
+                }
+                Merging.tick_announce();
+                Merging.label_next_interval("Sorting");
+                Merging.tick();
+                // Sorting is costly but necessary! GNU Parallel faster than std::sort
+                __gnu_parallel::sort(stable_vertices.begin(), stable_vertices.end());
+                Merging.tick_announce();
+                Merging.label_next_interval("Erasing Dupes");
+                Merging.tick();
+                stable_vertices.erase(std::unique(stable_vertices.begin(),
+                                                  stable_vertices.end()),
+                                      stable_vertices.end());
+                Merging.tick_announce();
+                #ifdef GRANULAR_TIMING
+                TV_LOCALIZATION.tick_announce();
+                // NUMBER TWO MOST COSTLY
+                TV_LOCALIZATION.label_next_interval("Remap");
+                TV_LOCALIZATION.tick();
+                #endif
+                vtkIdType nth_point = 0;
+                for (const vtkIdType point : stable_vertices) {
+                    partition_remapping.insert({point, nth_point++});
+                }
+                // This is correct, save an operation or two
+                inverse_partition_mapping = std::move(stable_vertices);
+                #ifdef GRANULAR_TIMING
+                TV_LOCALIZATION.tick_announce();
+                TV_LOCALIZATION.label_next_interval("TV cell remapping via VVI and IVVI");
+                TV_LOCALIZATION.tick();
+                #endif
             }
-            // This is correct, save an operation or two
-            inverse_partition_mapping = std::move(stable_vertices);
-            #ifdef GRANULAR_TIMING
-            TV_LOCALIZATION.tick_announce();
-            TV_LOCALIZATION.label_next_interval("TV cell remapping via VVI and IVVI");
-            TV_LOCALIZATION.tick();
-            #endif
             // Write the cells using localized indices
-            if (static_cast<vtkIdType>(included_points.size()) > max_allocated_points) {
+            if (static_cast<vtkIdType>(inverse_partition_mapping.size()) > max_allocated_points) {
                 if (_my_args.debug > DEBUG_MIN) {
                     out << WARN_EMOJI << timername
                         << " Allocate (or reallocate) sparse_vvi" << std::endl;
                 }
                 if (sparse_vvi != nullptr) cudaFreeHost(sparse_vvi);
                 if (dev_vvi != nullptr) cudaFree(dev_vvi);
-                vvi_size = included_points.size() * sizeof(vtkIdType);
+                vvi_size = inverse_partition_mapping.size() * sizeof(vtkIdType);
                 CUDA_ASSERT(cudaMallocHost((void**)&sparse_vvi, vvi_size));
                 CUDA_ASSERT(cudaMalloc((void**)&dev_vvi, vvi_size));
                 // DON'T SET MAX_ALLOCATED POINTS HERE, IT WILL GET SET LATER
@@ -767,8 +859,8 @@ void * parallel_work(void *parallel_arguments) {
                 // also get their size updated
             }
             bzero(dense_ivvi_host, TV->nPoints);
-            bzero(sparse_vvi, included_points.size());
-            nth_point = 0;
+            bzero(sparse_vvi, inverse_partition_mapping.size());
+            vtkIdType nth_point = 0;
             for (const vtkIdType point : inverse_partition_mapping) {
                 dense_ivvi_host[point] = nth_point;
                 sparse_vvi[nth_point++] = point;
@@ -778,7 +870,7 @@ void * parallel_work(void *parallel_arguments) {
             TV_LOCALIZATION.tick_announce();
             #endif
 
-            n_points = included_points.size();
+            n_points = inverse_partition_mapping.size();
             n_cells = cells.size();
 
             #ifdef GRANULAR_TIMING

@@ -105,7 +105,8 @@ void Timer::interval(int idx) {
             std::cout << "Timer[" << this->timer_name << "] "
                       << "Elapsed time for interval " << idx << "(" << (idx<<1)
                       << ", " << (idx<<1|1) << ")" << ": ";
-        else std::cout << label->second << ": ";
+        else std::cout << "Timer[" << this->timer_name << "] " << label->second
+                       << ": ";
         std::cout << elapsed_sec << "." << std::setfill('0') << std::setw(6)
                   << elapsed_subsec << std::endl;
         // Update last printed
