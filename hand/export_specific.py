@@ -1,11 +1,13 @@
 import meshio
 import numpy as np
+import tqdm
 
 import argparse
 import itertools
 import pathlib
 import subprocess
 import sys
+import time
 
 def get_version(fname):
     proc = subprocess.run(["head", "-n2", fname], capture_output=True)
@@ -19,6 +21,7 @@ def get_version(fname):
     return headstr
 
 def export_specific(args):
+    print(f"Load {args.mesh}")
     try:
         mesh = meshio.read(args.mesh)
     except:
@@ -32,12 +35,14 @@ def export_specific(args):
         except:
             print(f"Still failed to read")
             raise
+    start_time = time.time()
     if args.list_arrays:
         print(f"Found {len(mesh.point_data)} point arrays")
         print("\t-"+"\n\t-".join(mesh.point_data.keys()))
         print(f"Found {len(mesh.cell_data)} cell arrays")
         print("\t-"+"\n\t-".join(mesh.cell_data.keys()))
         return
+    print(f"Pruning point arrays to --keep list")
     saveable_point_data = {}
     for key in args.keep_arrays:
         # Possibility of KeyError intended to save you from dumbassery
@@ -45,20 +50,32 @@ def export_specific(args):
     mesh.point_data = saveable_point_data
     # If requested, look up and add external cells to cell_data
     if args.add_external:
+        print(f"Adding cell data arrays for partition info")
         if "_index" not in mesh.point_data:
             raise ValueError("No partitioning information '_index' array in mesh!")
         # Something like this PER partition in the mesh
         #mesh.cell_data[f'partition_{}_external'] = [0 if _ not in within_partition_points else 1 for _ in mesh.points]
         partitions = sorted(set(mesh.point_data['_index']))
         for (pid, partition) in enumerate(partitions):
+            print(f"Detect partition {pid}")
             within_partition = np.where(mesh.point_data['_index'] == partition)[0]
             n_cells = len(mesh.cells[0])
             inclusion = np.zeros(n_cells)
-            for cid, cell in enumerate(mesh.cells[0].data):
+            # Do this via numpy or the operators will take way too long
+            intersect = np.in1d(mesh.cells[0].data, within_partition)
+            per_cell = intersect.reshape((-1,4)).sum(axis=1)
+            inclusion[per_cell] = 1
+            """
+            # Verbose way -- takes 23+ hours to do a single partition on large datasets
+            for cid, cell in tqdm.tqdm(enumerate(mesh.cells[0].data), total=mesh.cells[0].data.shape[0]):
                 if any((vertex in within_partition for vertex in cell)):
                     inclusion[cid] = 1
+            """
             mesh.cell_data[f'partition_cells_{pid}'] = [inclusion]
+    stop_time = time.time()
+    print(f"Writing to {args.export}")
     mesh.write(args.export)
+    print(f"Non-IO time: {stop_time-start_time}")
 
 def build():
     prs = argparse.ArgumentParser()

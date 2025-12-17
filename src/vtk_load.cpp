@@ -206,34 +206,76 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
             exit(EXIT_FAILURE);
         }
         std::cout << "Has " << cd->GetNumberOfArrays() << " cell arrays" << std::endl;
-        data->partitionCells = new int[data->n_partitions * data->nCells];
-        int * pointer = data->partitionCells;
-        for (int p = 0; p < data->n_partitions; p++) {
-            char search[32] = {0};
-            sprintf(search, "partition_cells_%d", p);
-            std::cout << "Searching for array: " << search << std::endl;
-            bool found = false;
-            for (int i = 0; i < cd->GetNumberOfArrays(); i++) {
-                const char * arrayName = cd->GetArrayName(i);
-                if (p == 0) {
-                    std::cout << "\tCell Array " << i << " is named " << (arrayName ? arrayName : "NULL (not specified)") << std::endl;
-                }
-                if (strcmp(search, arrayName) == 0) {
-                    std::cout << "Copying cell data array " << arrayName << " for partition " << p << std::endl;
-                    vtkDataArray* cellInfo = cd->GetArray(i);
-                    for (int c = 0; c < data->nCells; c++) {
-                        *pointer = cellInfo->GetTuple1(c);
-                        pointer++;
+        data->partitionCells = new int[data->n_partitions * nCells]();
+        if (cd->GetNumberOfArrays() == 0) {
+            // Do the precompute here, multithreaded
+            Timer ecp(false, "External Cell Preprocess");
+            #pragma omp parallel
+            for (int c = 0; c < nCells; c++) {
+                for (int v = 0; v < nbVertsInCell; v++) {
+                    int vertexID = data->cells[(c*nbVertsInCell)+v],
+                        partitionID = data->partitionIDs[vertexID];
+                    data->partitionCells[(partitionID * nCells) + c] = 1;
+                    /* Extra-verbose for real-time checking
+                    vtkDataArray* cellInfo = cd->GetArray(partitionID);
+                    int datacheck = cellInfo->GetTuple1(c);
+                    if (datacheck != 1) {
+                        std::cout << "Mismatch for partition " << partitionID << " cell " << c << std::endl;
                     }
-                    found = true;
+                    */
                 }
             }
-            if (!found) {
-                // Cannot use partial / missing data
-                std::cerr << WARN_EMOJI << "Failed to find partition cells (cellData) array " << search << ", falling back to slower CPU-side precompute" << std::endl;
-                delete[] data->partitionCells;
-                data->partitionCells = nullptr;
-                break;
+            /* DEBUG ONLY: Check that answer matches Python saved answer
+            if (cd->GetNumberOfArrays() != 0) {
+                int mismatch = 0, first_mismatch = -1, first_partition = -1;
+                for (int i = 0; i < cd->GetNumberOfArrays(); i++) {
+                    cellInfo = cd->GetArray(i);
+                    for (int c = 0; c < data->nCells; c++) {
+                        if (cellInfo->GetTuple1(c) != data->partitionCells[(i * nCells) + c]) {
+                            mismatch++;
+                            if (first_mismatch == -1) {
+                                first_mismatch = c;
+                                first_partition = i;
+                            }
+                        }
+                    }
+                }
+                std::cout << "Mismatch count between disk data and instantaneous data: " << mismatch << std::endl;
+                std::cout << "First mismatch @ " << first_mismatch << " in partition " << first_partition << std::endl;
+            }
+            */
+            ecp.tick_announce();
+            //exit(EXIT_SUCCESS);
+        }
+        else {
+            int * pointer = data->partitionCells;
+            for (int p = 0; p < data->n_partitions; p++) {
+                char search[32] = {0};
+                sprintf(search, "partition_cells_%d", p);
+                std::cout << "Searching for array: " << search << std::endl;
+                bool found = false;
+                for (int i = 0; i < cd->GetNumberOfArrays(); i++) {
+                    const char * arrayName = cd->GetArrayName(i);
+                    if (p == 0) {
+                        std::cout << "\tCell Array " << i << " is named " << (arrayName ? arrayName : "NULL (not specified)") << std::endl;
+                    }
+                    if (strcmp(search, arrayName) == 0) {
+                        std::cout << "Copying cell data array " << arrayName << " for partition " << p << std::endl;
+                        vtkDataArray* cellInfo = cd->GetArray(i);
+                        for (int c = 0; c < data->nCells; c++) {
+                            *pointer = cellInfo->GetTuple1(c);
+                            pointer++;
+                        }
+                        found = true;
+                    }
+                }
+                if (!found) {
+                    // Cannot use partial / missing data
+                    std::cerr << WARN_EMOJI << "Failed to find partition cells (cellData) array " << search << ", falling back to slower CPU-side precompute" << std::endl;
+                    delete[] data->partitionCells;
+                    data->partitionCells = nullptr;
+                    break;
+                }
             }
         }
     }

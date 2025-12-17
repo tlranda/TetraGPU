@@ -26,35 +26,41 @@ echo "Full subscribe: ${full_subscribe}";
 mkdir -p ${HOSTNAME}_outputs;
 
 #datasets=$( ls -d datasets/*.vtu );
-datasets=( datasets/Bucket_8.vtu
-           datasets/Engine_8.vtu
-           datasets/viscousFingering_8.vtu
-           datasets/Foot_8.vtu
-           datasets/Fish_8.vtu
-           datasets/Asteroid_8.vtu
-           datasets/Hole_8.vtu
-           datasets/ctBones_8pt.vtu
-           datasets/Stent_8pt.vtu);
-declare -A target_array=( [datasets/Bucket_8.vtu]=Result
-                          [datasets/Engine_8.vtu]=Scalars_
-                          [datasets/viscousFingering_8.vtu]=concentration
-                          [datasets/Foot_8.vtu]=Scalars_
-                          [datasets/Fish_8.vtu]=Elevation
-                          [datasets/Asteroid_8.vtu]=scalar
-                          [datasets/Hole_8.vtu]=Result
-                          [datasets/ctBones_8pt.vtu]=Scalars_
-                          [datasets/Stent_8pt.vtu]=Scalars_
-                         );
-declare -A memory_limits=( [datasets/Bucket_8.vtu]=N
-                           [datasets/Engine_8.vtu]=N
-                           [datasets/viscousFingering_8.vtu]=N
-                           [datasets/Foot_8.vtu]=N
-                           [datasets/Fish_8.vtu]=N
-                           [datasets/Asteroid_8.vtu]=N
-                           [datasets/Hole_8.vtu]=N #151
-                           [datasets/ctBones_8pt.vtu]=N #78
-                           [datasets/Stent_8pt.vtu]=N #73
-                          );
+#datasets=( datasets/Bucket_8.vtu
+#           datasets/Engine_8.vtu
+#           datasets/viscousFingering_8.vtu
+#           datasets/Foot_8.vtu
+#          datasets/Fish_8.vtu
+#          datasets/Asteroid_8.vtu
+#          datasets/Hole_8.vtu
+#          datasets/ctBones_8pt.vtu
+#          datasets/Stent_8pt.vtu);
+#declare -A target_array=( [datasets/Bucket_8.vtu]=Result
+#                         [datasets/Engine_8.vtu]=Scalars_
+#                         [datasets/viscousFingering_8.vtu]=concentration
+#                         [datasets/Foot_8.vtu]=Scalars_
+#                         [datasets/Fish_8.vtu]=Elevation
+#                         [datasets/Asteroid_8.vtu]=scalar
+#                         [datasets/Hole_8.vtu]=Result
+#                         [datasets/ctBones_8pt.vtu]=Scalars_
+#                         [datasets/Stent_8pt.vtu]=Scalars_
+#                        );
+#declare -A memory_limits=( [datasets/Bucket_8.vtu]=N
+#                          [datasets/Engine_8.vtu]=N
+#                          [datasets/viscousFingering_8.vtu]=N
+#                          [datasets/Foot_8.vtu]=N
+#                          [datasets/Fish_8.vtu]=N
+#                          [datasets/Asteroid_8.vtu]=N
+#                          [datasets/Hole_8.vtu]=N #151
+#                          [datasets/ctBones_8pt.vtu]=N #78
+#                           [datasets/Stent_8pt.vtu]=N #73
+#                          );
+datasets=( hand/ctBones_8ep.vtu );
+declare -A target_array=( [hand/ctBones_8ep.vtu]=Scalars_ );
+declare -A memory_limits=( [hand/ctBones_8ep.vtu]=N );
+#datasets=( datasets/ctBones_8pt.vtu );
+#declare -A target_array=( [datasets/ctBones_8pt.vtu]=Scalars_ );
+#declare -A memory_limits=( [datasets/ctBones_8pt.vtu]=N );
 for ds in ${datasets[@]}; do
     echo "${ds}";
     shortname=$( basename ${ds} | tr "." "\n" | head -n 1 );
