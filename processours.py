@@ -16,6 +16,7 @@ search_strs = ["Timer[VTK Preprocessing]",
 exclude = defaultdict(list)
 
 averaging = dict()
+breakdown = dict()
 for fname in args.file:
     print(fname)
     with open(fname, 'r') as f:
@@ -33,6 +34,12 @@ for fname in args.file:
                 if not excluded:
                     keep.append(line.rstrip())
 
+    if 'iter' in fname:
+        aname = fname[:fname.index('iter')]
+        if aname not in averaging:
+            averaging[aname] = list()
+            breakdown[aname] = dict()
+
     total_time = 0.0
     for line in keep:
         for trigger in search_strs:
@@ -42,17 +49,20 @@ for fname in args.file:
                 break
         print("\t"+f"{what} ({line}) --- {section}")
         try:
-            total_time += float(section)
+            breakdown_time = float(section)
+            if what not in breakdown[aname]:
+                breakdown[aname][what] = list()
+            breakdown[aname][what].append(breakdown_time)
+            total_time += breakdown_time
         except ValueError:
             print("\t", line)
 
     print(f"Total time for {fname}: {total_time}")
     if 'iter' in fname:
-        aname = fname[:fname.index('iter')]
-        if aname not in averaging:
-            averaging[aname] = list()
         averaging[aname].append(total_time)
 
 for aname, times in averaging.items():
-    print(f"Average time for {aname}: {sum(times)/len(times)}")
+    print(f"Average time for {aname}: {sum(times)/len(times):.3f}")
+    for what in breakdown[aname].keys():
+        print("\t"+f"{what}: {sum(breakdown[aname][what])/len(breakdown[aname][what]):.3f}")
 

@@ -24,6 +24,9 @@ def export_specific(args):
     print(f"Load {args.mesh}")
     try:
         mesh = meshio.read(args.mesh)
+    except KeyboardInterrupt:
+        print(f"Cancelled by user input to keyboard, exiting")
+        exit()
     except:
         # What you're catching here is sys.exit() because meshio is programmed by clowns -- the error is only logged to stdout so we pray it hits a match on version 2.2
         print(f"Meshio fails to read due to version being unsupported. Manually re-writing file to version 0.1 (JUST version # change, no other data/format changes)")
@@ -44,6 +47,8 @@ def export_specific(args):
         return
     print(f"Pruning point arrays to --keep list")
     saveable_point_data = {}
+    if args.no_drops:
+        args.keep_arrays = list(mesh.point_data.keys())
     for key in args.keep_arrays:
         # Possibility of KeyError intended to save you from dumbassery
         saveable_point_data[key] = mesh.point_data[key]
@@ -73,9 +78,10 @@ def export_specific(args):
             """
             mesh.cell_data[f'partition_cells_{pid}'] = [inclusion]
     stop_time = time.time()
-    print(f"Writing to {args.export}")
-    mesh.write(args.export)
     print(f"Non-IO time: {stop_time-start_time}")
+    print(f"Writing to {args.export}")
+    if args.export != pathlib.Path("/dev/null"):
+        mesh.write(args.export)
 
 def build():
     prs = argparse.ArgumentParser()
@@ -83,6 +89,7 @@ def build():
     prs.add_argument("--export", type=pathlib.Path, default=None, help="Name to output to (with only kept arrays)")
     prs.add_argument("--list-arrays", action="store_true", help="List arrays of the mesh")
     prs.add_argument("--keep-arrays", default=None, nargs="*", action="append", help="Names of arrays to keep")
+    prs.add_argument("--no-drops", action="store_true", help="Do not drop any arrays")
     prs.add_argument("--add-external", action="store_true", help="Add external TV cell IDs per partition")
     return prs
 
@@ -92,10 +99,11 @@ def parse(args=None, prs=None):
     if args is None:
         args = prs.parse_args()
     if args.keep_arrays is None:
-        if not args.list_arrays:
+        if not (args.list_arrays or args.no_drops):
             raise ValueError(f"You do NOT want to delete EVERY array! Try listing the ones to remove first with --list")
     else:
-        args.keep_arrays = list(itertools.chain.from_iterable(args.keep_arrays))
+        if args.keep_arrays is not None:
+            args.keep_arrays = list(itertools.chain.from_iterable(args.keep_arrays))
     if not args.list_arrays and args.export is None:
         raise ValueError(f"Must give --export target if not just using --list to view arrays")
     return args
