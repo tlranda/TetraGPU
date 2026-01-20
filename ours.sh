@@ -25,42 +25,65 @@ echo "Full subscribe: ${full_subscribe}";
 
 mkdir -p ${HOSTNAME}_outputs;
 
-#datasets=$( ls -d datasets/*.vtu );
-#datasets=( datasets/Bucket_8.vtu
-#           datasets/Engine_8.vtu
-#           datasets/viscousFingering_8.vtu
-#           datasets/Foot_8.vtu
-#          datasets/Fish_8.vtu
-#          datasets/Asteroid_8.vtu
-#          datasets/Hole_8.vtu
-#          datasets/ctBones_8pt.vtu
-#          datasets/Stent_8pt.vtu);
-#declare -A target_array=( [datasets/Bucket_8.vtu]=Result
-#                         [datasets/Engine_8.vtu]=Scalars_
-#                         [datasets/viscousFingering_8.vtu]=concentration
-#                         [datasets/Foot_8.vtu]=Scalars_
-#                         [datasets/Fish_8.vtu]=Elevation
-#                         [datasets/Asteroid_8.vtu]=scalar
-#                         [datasets/Hole_8.vtu]=Result
-#                         [datasets/ctBones_8pt.vtu]=Scalars_
-#                         [datasets/Stent_8pt.vtu]=Scalars_
+datasets=( datasets/8kep_preprocess/Bucket_8kep.vtu
+           datasets/8kep_preprocess/Engine_8kep.vtu
+           datasets/8kep_preprocess/viscousFingering_8kep.vtu
+           datasets/8kep_preprocess/Foot_8kep.vtu
+           datasets/8kep_preprocess/Fish_8kep.vtu
+           datasets/8kep_preprocess/Asteroid_8kep.vtu
+           datasets/8kep_preprocess/Hole_8kep.vtu
+           datasets/8kep_preprocess/ctBones_8kep.vtu
+           datasets/8kep_preprocess/Stent_8kep.vtu
+          );
+declare -A target_array=( [datasets/8kep_preprocess/Bucket_8kep.vtu]=Result
+                          [datasets/8kep_preprocess/Engine_8kep.vtu]=Scalars_
+                          [datasets/8kep_preprocess/viscousFingering_8kep.vtu]=concentration
+                          [datasets/8kep_preprocess/Foot_8kep.vtu]=Scalars_
+                          [datasets/8kep_preprocess/Fish_8kep.vtu]=Elevation
+                          [datasets/8kep_preprocess/Asteroid_8kep.vtu]=scalar
+                          [datasets/8kep_preprocess/Hole_8kep.vtu]=Result
+                          [datasets/8kep_preprocess/ctBones_8kep.vtu]=Scalars_
+                          [datasets/8kep_preprocess/Stent_8kep.vtu]=Scalars_
+                        );
+declare -A memory_limits=( [datasets/8kep_preprocess/Bucket_8kep.vtu]=N
+                           [datasets/8kep_preprocess/Engine_8kep.vtu]=N
+                           [datasets/8kep_preprocess/viscousFingering_8kep.vtu]=N
+                           [datasets/8kep_preprocess/Foot_8kep.vtu]=N
+                           [datasets/8kep_preprocess/Fish_8kep.vtu]=N
+                           [datasets/8kep_preprocess/Asteroid_8kep.vtu]=N
+                           [datasets/8kep_preprocess/Hole_8kep.vtu]=N #151
+                           [datasets/8kep_preprocess/ctBones_8kep.vtu]=N #78
+                           [datasets/8kep_preprocess/Stent_8kep.vtu]=N #73
+                          );
+#datasets=( hand/Bucket_8ep.vtu
+#           hand/Engine_8ep.vtu
+#           hand/viscousFingering_8ep.vtu
+#           hand/Foot_8ep.vtu
+#          hand/Fish_8ep.vtu
+#          hand/Asteroid_8ep.vtu
+#          hand/Hole_8ep.vtu
+#          hand/ctBones_8ep.vtu
+#          hand/Stent_8ep.vtu);
+#declare -A target_array=( [hand/Bucket_8ep.vtu]=Result
+#                         [hand/Engine_8ep.vtu]=Scalars_
+#                         [hand/viscousFingering_8ep.vtu]=concentration
+#                         [hand/Foot_8ep.vtu]=Scalars_
+#                         [hand/Fish_8ep.vtu]=Elevation
+#                         [hand/Asteroid_8ep.vtu]=scalar
+#                         [hand/Hole_8ep.vtu]=Result
+#                         [hand/ctBones_8ep.vtu]=Scalars_
+#                         [hand/Stent_8ep.vtu]=Scalars_
 #                        );
-#declare -A memory_limits=( [datasets/Bucket_8.vtu]=N
-#                          [datasets/Engine_8.vtu]=N
-#                          [datasets/viscousFingering_8.vtu]=N
-#                          [datasets/Foot_8.vtu]=N
-#                          [datasets/Fish_8.vtu]=N
-#                          [datasets/Asteroid_8.vtu]=N
-#                          [datasets/Hole_8.vtu]=N #151
-#                          [datasets/ctBones_8pt.vtu]=N #78
-#                           [datasets/Stent_8pt.vtu]=N #73
+#declare -A memory_limits=( [hand/Bucket_8ep.vtu]=N
+#                          [hand/Engine_8ep.vtu]=N
+#                          [hand/viscousFingering_8ep.vtu]=N
+#                          [hand/Foot_8ep.vtu]=N
+#                          [hand/Fish_8ep.vtu]=N
+#                          [hand/Asteroid_8ep.vtu]=N
+#                          [hand/Hole_8ep.vtu]=N #151
+#                          [hand/ctBones_8ep.vtu]=N #78
+#                           [hand/Stent_8ep.vtu]=N #73
 #                          );
-datasets=( hand/ctBones_8ep.vtu );
-declare -A target_array=( [hand/ctBones_8ep.vtu]=Scalars_ );
-declare -A memory_limits=( [hand/ctBones_8ep.vtu]=N );
-#datasets=( datasets/ctBones_8pt.vtu );
-#declare -A target_array=( [datasets/ctBones_8pt.vtu]=Scalars_ );
-#declare -A memory_limits=( [datasets/ctBones_8pt.vtu]=N );
 for ds in ${datasets[@]}; do
     echo "${ds}";
     shortname=$( basename ${ds} | tr "." "\n" | head -n 1 );
