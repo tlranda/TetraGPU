@@ -62,6 +62,10 @@ endif()
 message(STATUS "VTK_VERSION: ${VTK_VERSION}")
 message("VTK_DIR: ${VTK_DIR}")
 # message("VTK_LIBRARIES: ${VTK_LIBRARIES}")
+# OMP dependency
+find_package(OpenMP REQUIRED)
+target_link_libraries(main PRIVATE OpenMP::OpenMP_CXX)
+target_link_libraries(main PRIVATE "-ltbb")
 
 # C++ / CUDA settings
 set(CMAKE_CXX_STANDARD 11)
@@ -73,7 +77,7 @@ set(CMAKE_USE_WIN32_THREADS_INIT 0)
 set(CMAKE_USE_PTHREADS_INIT 1)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 set(CUDA_SEPARABLE_COMPILATION ON)
-#set(CMAKE_CUDA_ARCHITECTURES "61")
+set(CMAKE_CUDA_ARCHITECTURES "60;70;80" CACHE STRING "NVIDIA Compute Capbilities to build for")
 #set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 target_compile_options(main PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:--ptxas-options=-v>)
 target_compile_options(main PRIVATE -Wall -Wextra -Wno-pedantic) # -Werror
