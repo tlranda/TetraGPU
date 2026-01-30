@@ -61,7 +61,7 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
     // Disable getopt's automatic error messages so we can catch it via '?'
     opterr = 0;
     // Getopt option declarations
-    const char * optionstring = "hi:t:e:a:p:v:g:d:n"
+    const char * optionstring = "hi:t:e:a:p:l:v:g:d:n"
         // Semicolon is newline separated to permit #ifdef guards for portions of the option string
     ;
     static struct option long_options[] = {
@@ -71,6 +71,7 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
         {"export", required_argument, 0, 'e'},
         {"arrayname", required_argument, 0, 'a'},
         {"partitioningname", required_argument, 0, 'p'},
+        {"thread_logname", required_argument, 0, 'l'},
         {"max_VV", required_argument, 0, 'v'},
         {"gpus", required_argument, 0, 'g'},
         {"debug", required_argument, 0, 'd'},
@@ -100,6 +101,7 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
         {"export", "File to export CritPoints classifications to"},
         {"arrayname", "Array to use for scalar data (as string name)"},
         {"partitioningname", "Array to use for multi-GPU partitioning (as string name)"},
+        {"thread_logname", "Prefix for per-thread logs (suffixed as 'thread_#.log'), leave undefined to allow all threads to write to std::cout"},
         {"max_VV", "Override estimation of max VV with integer value"},
         {"gpus", "Set number of GPUs to use (larger than detected is warning, but will emulate behavior)"},
         {"debug", "Set the debug level (0=OFF, 1=Reduced, 2=Verbose)"},
@@ -126,6 +128,7 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
         {"export", "classes.txt"},
         {"arrayname", "my_scalar_data_name"},
         {"partitioningname", "my_partition_data_name"},
+        {"thread_logname", "my_log_name"},
         {"max_VV", "(INT>0, preferably multiple of 32)"},
         {"gpus", "(INT>=0)"},
         {"debug", "{0,1,2}"},
@@ -167,6 +170,9 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
                 break;
             case 'p':
                 args.partitioningname = std::string(optarg);
+                break;
+            case 'l':
+                args.thread_logname = std::string(optarg);
                 break;
             case 'v':
                 args.max_VV = atoi(optarg);
@@ -291,6 +297,7 @@ void parse(int argc, char *argv[], runtime_arguments & args) {
               << INFO_EMOJI << "Partitioning name: " << (args.partitioningname == "" ?
                                                 "NO PARTITIONING -- SINGLE GPU" :
                                                 args.partitioningname) << std::endl
+              << INFO_EMOJI << "Thread log name: " << args.thread_logname << std::endl
               << INFO_EMOJI << "Max VV: " << (args.max_VV == -1 ?
                                                 "[Estimated from mesh]" :
                                                 std::to_string(args.max_VV))

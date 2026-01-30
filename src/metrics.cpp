@@ -26,8 +26,10 @@
 */
 
 // Constructors
-Timer::Timer(void) { this->tick(); }
-Timer::Timer(bool deferred, std::string name, bool quiet_) {
+Timer::Timer(void) {
+    this->tick();
+}
+Timer::Timer(bool deferred, std::string name, bool quiet_, std::ostream &out) : output(&out) {
     if (!deferred) this->tick();
     this->timer_name = name;
     this->quiet = quiet_;
@@ -83,10 +85,10 @@ void Timer::interval(int idx) {
 
     // Early-exit: Interval is not closed
     if (idx >= this->open_interval) {
-        std::cerr << EXCLAIM_EMOJI << "Timer[" << this->timer_name << "] ";
-        if (label == this->labels.end()) std::cerr << "Interval " << idx;
-        else std::cerr << label->second;
-        std::cerr << " cannot be reported until it is closed" << std::endl;
+        *(this->output) << EXCLAIM_EMOJI << "Timer[" << this->timer_name << "] ";
+        if (label == this->labels.end()) *(this->output) << "Interval " << idx;
+        else *(this->output) << label->second;
+        *(this->output) << " cannot be reported until it is closed" << std::endl;
         return;
     }
 
@@ -100,14 +102,14 @@ void Timer::interval(int idx) {
     elapsed_subsec = elapsed_subsec % 1'000'000;
 
     if (!this->quiet) {
-        std::cout << HOURGLASS_EMOJI;
+        *(this->output) << HOURGLASS_EMOJI;
         if (label == this->labels.end())
-            std::cout << "Timer[" << this->timer_name << "] "
+            *(this->output) << "Timer[" << this->timer_name << "] "
                       << "Elapsed time for interval " << idx << "(" << (idx<<1)
                       << ", " << (idx<<1|1) << ")" << ": ";
-        else std::cout << "Timer[" << this->timer_name << "] " << label->second
+        else *(this->output) << "Timer[" << this->timer_name << "] " << label->second
                        << ": ";
-        std::cout << elapsed_sec << "." << std::setfill('0') << std::setw(6)
+        *(this->output) << elapsed_sec << "." << std::setfill('0') << std::setw(6)
                   << elapsed_subsec << std::endl;
         // Update last printed
         this->last_printed = idx;
@@ -123,12 +125,12 @@ void Timer::all_intervals(int idx) {
     for ( ; idx < this->open_interval; idx++)
         this->interval(idx);
     if (this->timings.size() % 2) {
-        std::cout << EXCLAIM_EMOJI << "Timer[" << this->timer_name << "] "
+        *(this->output) << EXCLAIM_EMOJI << "Timer[" << this->timer_name << "] "
                   << "Open interval ";
         auto label = this->labels.find(this->open_interval);
-        if (label == this->labels.end()) std::cout << this->open_interval;
-        else std::cout << label->second;
-        std::cout << " cannot report time until it is closed by another tick()"
+        if (label == this->labels.end()) *(this->output) << this->open_interval;
+        else *(this->output) << label->second;
+        *(this->output) << " cannot report time until it is closed by another tick()"
                   << std::endl;
     }
 }

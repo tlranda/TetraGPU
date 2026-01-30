@@ -152,12 +152,13 @@ typedef std::vector<std::vector<vtkIdType>> TT_Data;
 
 // Argument values to be stored here, with defaults if they are optional
 typedef struct argstruct {
-    std::string fileName = "tiny.vtu";
     int threadNumber = 1, max_VV = -1, n_GPUS = 0, debug = DEBUG_MAX;
-    std::string export_ = "",
-                arrayname = "",
-                partitioningname = "";
     bool no_partitioning = false;
+    std::string fileName = "tiny.vtu",
+                export_ = "",
+                arrayname = "",
+                partitioningname = "",
+                thread_logname = "";
     // Endian-ness may mean defaults need to be set in LSB->MSB order
     // TE starts on 3rd LSB
     std::bitset<14> arg_flags{"10000000000001"};
@@ -205,6 +206,7 @@ typedef struct argstruct {
         arrayname = other.arrayname;
         partitioningname = other.partitioningname;
         no_partitioning = other.no_partitioning;
+        thread_logname = other.thread_logname;
         arg_flags = other.arg_flags;
     }
 } runtime_arguments;

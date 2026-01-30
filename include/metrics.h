@@ -31,14 +31,15 @@ class Timer {
         // Prefix name for outputs
         std::string timer_name;
         // Tracks what has been printed
-        int last_printed = -1;
+        int last_printed = -1,
         // Convenient way to track INTERVALS rather than vector entries,
         // automatically controlled by tick()
-        int open_interval = 0;
+            open_interval = 0;
         bool quiet = false;
+        std::ostream *output;
     public:
         // Creation / Destruction / Copy
-        Timer(bool deferred, std::string name="", bool quiet_=false);
+        Timer(bool deferred, std::string name="", bool quiet_=false, std::ostream &output=std::cout);
         Timer(void);
         ~Timer(void);
 

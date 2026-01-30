@@ -559,14 +559,15 @@ void * parallel_work(void *parallel_arguments) {
 
     std::streambuf * output_buffer;
     std::ofstream output_fstream;
-    if (_my_args.threadNumber == 1) {
-        output_buffer = std::cout.rdbuf();
-    }
-    else {
+    if (strcmp(_my_args.thread_logname.c_str(), "") != 0) {
         char logname[32];
-        sprintf(logname, "thread_%02d.log", gpu_id);
+        sprintf(logname, "%sthread_%02d.log", _my_args.thread_logname.c_str(), gpu_id);
+        std::cout << "Thread " << gpu_id << " writes to " << logname << std::endl;
         output_fstream.open(logname);
         output_buffer = output_fstream.rdbuf();
+    }
+    else {
+        output_buffer = std::cout.rdbuf();
     }
     std::ostream out(output_buffer);
 
@@ -575,8 +576,8 @@ void * parallel_work(void *parallel_arguments) {
     #ifdef GRANULAR_TIMING
     // Set up parallel timer
     char intervalname[128];
-    Timer timer(true, timername, _my_args.debug == NO_DEBUG);
-    Timer thread_time(false, timername, false);
+    Timer timer(true, timername, _my_args.debug == NO_DEBUG, out);
+    Timer thread_time(false, timername, false, out);
     #endif
 
     // Establish GPU to utilize and allocate a stream for its operations
@@ -617,11 +618,11 @@ void * parallel_work(void *parallel_arguments) {
     size_t dense_cpc_size = (3*TV->nPoints)*sizeof(unsigned int),
            dense_ivvi_size = (TV->nPoints)*sizeof(vtkIdType);
     if (_my_args.debug >= DEBUG_MIN) {
-        std::cout << "Set dense CPC size for " << TV->nPoints
-                  << " points (3 classes per point, " << 3*TV->nPoints
-                  << " entries)" << std::endl
-                  << "Set dense IVVI size for " << TV->nPoints << " points"
-                  << std::endl;
+        out << "Set dense CPC size for " << TV->nPoints
+            << " points (3 classes per point, " << 3*TV->nPoints
+            << " entries)" << std::endl
+            << "Set dense IVVI size for " << TV->nPoints << " points"
+            << std::endl;
     }
     CUDA_ASSERT(cudaMallocHost((void**)&dense_CPCs, dense_cpc_size));
     bzero(dense_CPCs, 3*TV->nPoints);
@@ -704,12 +705,14 @@ void * parallel_work(void *parallel_arguments) {
             }
             // sparse_vvi == dense_ivvi due to identity!
             vvi_size = dense_ivvi_size;
-            std::cout << "No partitioning, VVI size == IVVI size -- "
-                         "both arrays are identity!" << std::endl;
+            out << "No partitioning, VVI size == IVVI size -- both arrays are "
+                   "identity!" << std::endl;
         }
         else {
             #ifdef GRANULAR_TIMING
-            Timer TV_LOCALIZATION(true, "TV Localization");
+            char TVlocname[128];
+            sprintf(TVlocname, "TV Localization] [Partition %d", my_partition_id);
+            Timer TV_LOCALIZATION(true, TVlocname, false, out);
             TV_LOCALIZATION.label_next_interval("Determine points and cells");
             TV_LOCALIZATION.tick();
             #endif
@@ -792,7 +795,7 @@ void * parallel_work(void *parallel_arguments) {
                 //cells, included_cells, all defined above
                 std::vector<vtkIdType> stable_vertices; // Will be SORTED and DEDUPED
                 // Reserve rough totals to avoid reallocs
-                Timer Merging(true, "MERGING");
+                Timer Merging(true, "MERGING", false, out);
                 Merging.label_next_interval("Alloc");
                 Merging.tick();
                 size_t total_cells = 0,
@@ -1065,7 +1068,7 @@ void * parallel_work(void *parallel_arguments) {
         timer.tick_announce();
         char kerneltimername[32];
         sprintf(kerneltimername, "Parallel %s kernel %02d", "VV", gpu_id);
-        Timer vvKernel(false, kerneltimername, _my_args.debug == NO_DEBUG);
+        Timer vvKernel(false, kerneltimername, _my_args.debug == NO_DEBUG, out);
         #endif
         KERNEL_WARN(VV_kernel<<<grid_size KERNEL_LAUNCH_SEPARATOR
                                 thread_block_size KERNEL_LAUNCH_SEPARATOR
@@ -1164,7 +1167,7 @@ void * parallel_work(void *parallel_arguments) {
         timer.label_next_interval(intervalname);
         timer.tick();
         sprintf(kerneltimername, "Parallel %s kernel %02d", "SFCP", gpu_id);
-        Timer sfcpKernel(false, kerneltimername, _my_args.debug == NO_DEBUG);
+        Timer sfcpKernel(false, kerneltimername, _my_args.debug == NO_DEBUG, out);
         #endif
         KERNEL_WARN(critPoints<<<grid_size KERNEL_LAUNCH_SEPARATOR
                                  thread_block_size KERNEL_LAUNCH_SEPARATOR
