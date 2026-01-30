@@ -1,38 +1,55 @@
 from collections import defaultdict
 import argparse
+import sys
 
 p = argparse.ArgumentParser()
-p.add_argument('file', nargs="+", help="STDOUT from our CriticalPoints run")
+p.add_argument('file', nargs="*", default=None, help="STDOUT from our CriticalPoints run (or stdin if none specified)")
+p.add_argument('--represents', choices=['all','main','worker'], default='all', help='What is represented by the input files (all output, main()\'s output, parallel_work() output of thread)')
 args = p.parse_args()
+if len(args.file) == 0:
+    args.file.append(None)
 
 """
 ⏳ Timer[VTK Preprocessing] Elapsed time for interval 0(0, 1): 0.000461
 ⏳ Timer[ALL Critical Points] Elapsed time for interval 0(0, 1): 0.070294
 """
 # Substrings to match for lines that end in floating-point value to add up
-search_strs = ["Timer[VTK Preprocessing]",
-               "Timer[ALL Critical Points]"]
+if args.represents == 'all':
+    search_strs = ["Timer[VTK Preprocessing]",
+                   "Timer[ALL Critical Points]"]
+elif args.represents == 'main':
+    search_strs = ["Timer[ALL Critical Points]"]
+elif args.represents == 'worker':
+    search_strs = ["Timer[Parallel worker"]
+
 # Key (entry of search_strs) | Value (substring that lets you know to exclude it)
 exclude = defaultdict(list)
 
 averaging = dict()
 breakdown = dict()
 for fname in args.file:
+    if fname is None:
+        lines = sys.stdin.readlines()
+        fname = 'stdin'
+    else:
+        with open(fname, 'r') as f:
+            lines = f.readlines()
     print(fname)
-    with open(fname, 'r') as f:
-        lines = f.readlines()
-        keep = list()
-        for line in lines:
-            for trigger in search_strs:
-                if trigger not in line:
-                    continue
-                excluded = False
-                for exclusion in exclude[trigger]:
-                    if exclusion in line:
-                        excluded = True
-                        break
-                if not excluded:
-                    keep.append(line.rstrip())
+    keep = list()
+    for line in lines:
+        for trigger in search_strs:
+            if trigger not in line:
+                continue
+            excluded = False
+            for exclusion in exclude[trigger]:
+                if exclusion in line:
+                    excluded = True
+                    break
+            if not excluded:
+                keep.append(line.rstrip())
+    # Special fixup for worker
+    if args.represents == 'worker':
+        keep = keep[:-2]
 
     if 'iter' in fname:
         aname = fname[:fname.index('iter')]
