@@ -1,34 +1,51 @@
 #!/bin/bash
-#SBATCH --exclusive
-#SBATCH -t 0-1
+#SBATCH --nodes 1
+#SBATCH --cpus-per-task 1
+#SBATCH --mem 100GB
+#SBATCH --mail-type NONE
+#SBATCH --time 1:00:00
+
+# Add --ntasks <#CPUS> --gpus <model>:1 flags to sbatch of this script
 
 # Configuration
 override=0; # Set to 1 for override
+n_repeats=3; # Times to repeat each dataset
 
-# Add -w <node> flag to sbatch of this script
-cd /home/tlranda/TetraTopo_GPU/GALE;
-module load actopo boost;
-module list; # Should also have a cuda module!
+cd /home/tlranda/TetraTopo_GPU/GALE_Vanilla;
+source /home/tlranda/TetraTopo_GPU/env.sh; # Modulefiles and list
 
 # Set number of CPUs once
 ncpus=$( lscpu | grep -e "^CPU(s):" | awk '{print $NF}' );
 # GALE should use #(logical cores minus 2) as threads for best performance
 full_subscribe=$((${ncpus}-2));
+echo "Execute on host ${HOSTNAME}";
+nvidia-smi;
 echo "NCPUS: ${ncpus}";
 echo "Full subscribe: ${full_subscribe}";
 
-mkdir -p ${HOSTNAME}_outputs;
+outputdir="${HOSTNAME}_outputs";
+mkdir -p ${outputdir};
 
-datasets=$( ls -d datasets/*.vtu );
-declare -A target_array=( [datasets/Bucket.vtu]=Result
-                          [datasets/viscousFingering.vtu]=concentration
-                          [datasets/ctBones.vtu]=Scalars_
-                          [datasets/Engine_100.vtu]=Scalars_
-                          [datasets/Foot_100.vtu]=Scalars_
-                          [datasets/Fish_100.vtu]=Elevation
-                          [datasets/Asteroid_100.vtu]=scalar
-                          [datasets/Hole_100.vtu]=Result
-                          [datasets/Stent_100.vtu]=Scalars_
+binary="ttkScalarFieldCriticalPoints";
+
+datasets=( datasets/1k_preprocess/Bucket_1k.vtu
+           datasets/1k_preprocess/Engine_1k.vtu
+           datasets/1k_preprocess/viscousFingering_1k.vtu
+           datasets/1k_preprocess/Foot_1k.vtu
+           datasets/1k_preprocess/Fish_1k.vtu
+           datasets/1k_preprocess/Asteroid_1k.vtu
+           datasets/1k_preprocess/Hole_1k.vtu
+           datasets/1k_preprocess/ctBones_1k.vtu
+           datasets/1k_preprocess/Stent_1k.vtu);
+declare -A target_array=( [datasets/1k_preprocess/Bucket_1k.vtu]=Result
+                          [datasets/1k_preprocess/Engine_1k.vtu]=Scalars_
+                          [datasets/1k_preprocess/viscousFingering_1k.vtu]=concentration
+                          [datasets/1k_preprocess/Foot_1k.vtu]=Scalars_
+                          [datasets/1k_preprocess/Fish_1k.vtu]=Elevation
+                          [datasets/1k_preprocess/Asteroid_1k.vtu]=scalar
+                          [datasets/1k_preprocess/Hole_1k.vtu]=Result    # -b 32
+                          [datasets/1k_preprocess/ctBones_1k.vtu]=Scalars_
+                          [datasets/1k_preprocess/Stent_1k.vtu]=Scalars_
                          );
 for ds in ${datasets[@]}; do
     echo "${ds}";
@@ -37,7 +54,7 @@ for ds in ${datasets[@]}; do
     used_array="${target_array[$ds]}";
     if [[ ! ${used_array+_} ]]; then
         # Auto-lookup for attached arrays, filtered down to hopefully just the PointData segment excluding any array named "_index"
-        found_arrays=$( ./build_${HOSTNAME}/bin/ttkScalarFieldCriticalPoints -i ${ds} -l | sed -n '/.*- \w/,/.*CellData:/p' | awk '{print $NF}' | grep -v -e "CellData:" -e "_index" | sort | uniq );
+        found_arrays=$( ./build_n01_2026/bin/ttkScalarFieldCriticalPoints -i ${ds} -l | sed -n '/.*- \w/,/.*CellData:/p' | awk '{print $NF}' | grep -v -e "CellData:" -e "_index" | sort | uniq );
         # Default to picking the first array from the list
         used_array=$( echo ${found_arrays} | tr " " "\n" | head -n 1 );
         echo "No array set for ${ds}; found arrays: ${found_arrays}";
@@ -48,16 +65,18 @@ for ds in ${datasets[@]}; do
     fi;
     # Array selected; proceed
     echo -e "\tUsing array: ${used_array}";
-    cmd="./build_${HOSTNAME}/bin/ttkScalarFieldCriticalPoints -i ${ds} -a ${used_array} -t ${full_subscribe}";
-    to_make="${HOSTNAME}_outputs/${shortname}_${full_subscribe}CPUS.output";
-    if [[ ! -e "${to_make}" || ${override} == 1 ]]; then
-        full_command="${cmd} > ${to_make}";
-        echo "${full_command}";
-        eval "${full_command}";
-    else
-        echo "${to_make} exists, skipping...";
-    fi;
+    cmd="./build_n01_2026/bin/${binary} -i ${ds} -a ${used_array} -t ${full_subscribe}";
+    for iteration in `seq 1 ${n_repeats}`; do
+        to_make="${outputdir}/${shortname}_${full_subscribe}CPUS_iter_${iteration}.output";
+	if [[ ! -e "${to_make}" || ${override} == 1 ]]; then
+	    full_command="${cmd} > ${to_make}";
+	    echo "${full_command}";
+            eval "${full_command}";
+	else
+	    echo "${to_make} exists, skipping...";
+	fi;
+    done;
 done;
 # Analyze all captured traces
-python3 processGALE.py ${HOSTNAME}_outputs/*.output;
+python3 processGALE.py ${outputdir}/*.output;
 

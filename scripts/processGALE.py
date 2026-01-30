@@ -1,69 +1,66 @@
+from collections import defaultdict
 import argparse
 
 p = argparse.ArgumentParser()
 p.add_argument('file', nargs="+", help="STDOUT from GALE TTK ScalarFieldCriticalPoints run")
 args = p.parse_args()
 
-suffix100s = ['Triangles and boundary triangles preconditioned in',
-              'Time usage for preconditioning:',
-              '[ScalarFieldCriticalPoints] Processed',
-              'Time usage for computation:',
+search_strs = ['[TIMER] GPU Algorithm SFCP',
+               '[TIMER] Preprocessing',
               ]
+exclude = defaultdict(list)
 
+averaging = dict()
+breakdown = dict()
 for fname in args.file:
     print(fname)
     with open(fname, 'r') as f:
         lines = f.readlines()
         keep = list()
-        start = False
         for line in lines:
-            if not start:
-                if 'ScalarFieldCriticalPoints' not in line:
+            for trigger in search_strs:
+                if trigger not in line:
                     continue
-                start = True
-                continue
-            elif 's|' in line:
-                keep.append(line.rstrip())
-            elif 'Memory usage' in line:
-                keep.append(line.rstrip())
-            elif any([_ in line for _ in suffix100s]):
-                keep.append(line.rstrip())
+                excluded = False
+                for exclusion in exclude[trigger]:
+                    if exclusion in line:
+                        excluded = True
+                        break
+                if not excluded:
+                    keep.append(line.rstrip())
+    if 'iter' in fname:
+        aname = fname[:fname.index('iter')]
+        if aname not in averaging:
+            averaging[aname] = list()
+            breakdown[aname] = dict((w, [0.0]) for w in search_strs)
+        else:
+            for w in breakdown[aname]:
+                breakdown[aname][w].append(0.0)
 
     total_time = 0.0
     for line in keep:
-        if 'Memory usage' in line:
-            continue
-        elif 's|' in line:
-            try:
-                what_idx = line.index('Built')+len('Built ')
-            except ValueError:
-                continue
-            try:
-                what_next = what_idx+line[what_idx:].index('.')-1
-            except ValueError:
-                print("\t", line[what_idx:])
-                raise
-            what = line[what_idx:what_next]
-            cutoff = what_next+line[what_next:].index('s|')
-            segment = what_next+line[what_next:cutoff].rindex('[')+1
-            section = line[segment:cutoff]
-        else:
-            for maybe in suffix100s:
-                if maybe in line:
-                    what = maybe
-                    # Believe it or not, the spacing is inconsistent so I'm just
-                    # doing this to account for it; never heard of regex who's that
-                    section = line.rstrip()
-                    section = line[line.rindex('s')-1]
-                    while line[-1] not in "0123456789":
-                        line = line[:-1]
-                    section = line[line.rindex(' ')+1:]
-                    break
-        print("\t", what, '---', section)
+        for trigger in search_strs:
+            if trigger in line:
+                what = trigger
+                section = line[line.rindex(' ')+1:]
+                break
+        print("\t"+f"{what} ({line}) --- {section}")
         try:
-            total_time += float(section)
+            breakdown_time = float(section)
+            breakdown[aname][what][-1] += breakdown_time
+            if what == 'Timer[Preprocessing Cells]':
+                breakdown[aname]['Timer[ACTOPO alg]'][-1] -= breakdown_time
+            else:
+                total_time += breakdown_time
         except ValueError:
             print("\t", line)
 
     print(f"Total time for {fname}: {total_time}")
+    if 'iter' in fname:
+        averaging[aname].append(total_time)
+
+for aname, times in averaging.items():
+    print(f"Average time for {aname}: {sum(times)/len(times):.3f}")
+    for what in breakdown[aname].keys():
+        print('\t'+f"{what}: {sum(breakdown[aname][what])/len(breakdown[aname][what]):.3f}")
 
