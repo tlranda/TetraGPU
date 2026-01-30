@@ -653,7 +653,8 @@ void * parallel_work(void *parallel_arguments) {
         }
     }
     // Sort for traversal order (DESCENDING -- should limit need for reallocs)
-    __gnu_parallel::sort(partition_metadata.rbegin(), partition_metadata.rend());
+    //__gnu_parallel::sort(partition_metadata.rbegin(), partition_metadata.rend());
+    std::sort(std::execution::par, partition_metadata.rbegin(), partition_metadata.rend());
     max_in_partition = partition_metadata[0].first;
     if (_my_args.debug > NO_DEBUG) {
         out << INFO_EMOJI << timername << " works on at most "
@@ -817,7 +818,8 @@ void * parallel_work(void *parallel_arguments) {
                 Merging.label_next_interval("Sorting");
                 Merging.tick();
                 // Sorting is costly but necessary! GNU Parallel faster than std::sort
-                __gnu_parallel::sort(stable_vertices.begin(), stable_vertices.end());
+                //__gnu_parallel::sort(stable_vertices.begin(), stable_vertices.end());
+		std::sort(std::execution::par, stable_vertices.begin(), stable_vertices.end());
                 Merging.tick_announce();
                 Merging.label_next_interval("Erasing Dupes");
                 Merging.tick();
