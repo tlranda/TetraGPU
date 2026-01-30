@@ -181,7 +181,7 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
         // Determine the number of partitions and their counts
         // TODO: Parallelize
         for (vtkIdType i = 0; i < nPoints; i++) {
-            meshPartitionIDs[i] = partitionAttribute->GetTuple1(i);
+            meshPartitionIDs[i] = partitionAttribute->GetTuple1(i)-1;
         }
         std::set<int> partition_set(meshPartitionIDs, meshPartitionIDs+nPoints);
         data->n_partitions = partition_set.size();

@@ -526,31 +526,34 @@ void full_check_VV_Host(const size_t vv_size, const size_t vv_index_size,
 }
 
 struct thread_arguments {
-    int gpu_id, n_parallel;
+    int gpu_id,
+        n_parallel,
+        max_VV;
     std::shared_ptr<TV_Data> TV;
-    int max_VV;
     runtime_arguments args;
 
     thread_arguments(void) { }
     thread_arguments(
         int gpu_id1,
         int n_parallel1,
-        std::shared_ptr<TV_Data> TV1,
         int max_VV1,
+        std::shared_ptr<TV_Data> TV1,
         runtime_arguments args1) {
             gpu_id = gpu_id1;
             n_parallel = n_parallel1;
-            TV = TV1;
             max_VV = max_VV1;
+            TV = TV1;
             args = args1;
     }
 };
 void * parallel_work(void *parallel_arguments) {
     // Unpacking
     thread_arguments *thread_args = (thread_arguments *)parallel_arguments;
-    int gpu_id = thread_args->gpu_id,
-        max_VV_override = thread_args->max_VV,
-        n_parallel = thread_args->n_parallel;
+    const int gpu_id = thread_args->gpu_id,
+              max_VV_override = thread_args->max_VV,
+              n_parallel = thread_args->n_parallel;
+    int max_within_thread_parallel = std::thread::hardware_concurrency() / n_parallel;
+    if (max_within_thread_parallel < 1) max_within_thread_parallel = 1;
     const std::shared_ptr<TV_Data> TV = thread_args->TV;
     runtime_arguments _my_args = thread_args->args;
 
@@ -653,8 +656,11 @@ void * parallel_work(void *parallel_arguments) {
         }
     }
     // Sort for traversal order (DESCENDING -- should limit need for reallocs)
-    //__gnu_parallel::sort(partition_metadata.rbegin(), partition_metadata.rend());
+    #if USE_GNU_PARALLEL
+    __gnu_parallel::sort(partition_metadata.rbegin(), partition_metadata.rend());
+    #else
     std::sort(std::execution::par, partition_metadata.rbegin(), partition_metadata.rend());
+    #endif
     max_in_partition = partition_metadata[0].first;
     if (_my_args.debug > NO_DEBUG) {
         out << INFO_EMOJI << timername << " works on at most "
@@ -738,10 +744,10 @@ void * parallel_work(void *parallel_arguments) {
                 // START TV LOCALIZATION -- THIS TAKES A WHILE
                 // Determine the number of points and cells
                 // First order inclusion: All points of any tetra with one or more vertices included in partition
-                std::vector<std::vector<std::array<vtkIdType, nbVertsInCell>>> cells_t(24);
-                std::vector<std::vector<vtkIdType>> included_cells_t(24);
-                std::vector<std::vector<vtkIdType>> points_t(24); // UNSORTED, includes DUPES
-                #pragma omp parallel num_threads(24)
+                std::vector<std::vector<std::array<vtkIdType, nbVertsInCell>>> cells_t(max_within_thread_parallel);
+                std::vector<std::vector<vtkIdType>> included_cells_t(max_within_thread_parallel);
+                std::vector<std::vector<vtkIdType>> points_t(max_within_thread_parallel); // UNSORTED, includes DUPES
+                #pragma omp parallel num_threads(max_within_thread_parallel)
                 {
                     int tid = omp_get_thread_num();
                     std::vector<std::array<vtkIdType, nbVertsInCell>> &local_cells = cells_t[tid];
@@ -792,7 +798,7 @@ void * parallel_work(void *parallel_arguments) {
                 size_t total_cells = 0,
                        total_incells = 0,
                        total_points = 0;
-                for (int t = 0; t < 24; ++t) {
+                for (int t = 0; t < max_within_thread_parallel; ++t) {
                     total_cells += cells_t[t].size();
                     total_incells += included_cells_t[t].size();
                     total_points += points_t[t].size();
@@ -803,7 +809,7 @@ void * parallel_work(void *parallel_arguments) {
                 Merging.tick_announce();
                 Merging.label_next_interval("Insertion");
                 Merging.tick();
-                for (int t = 0; t < 24; ++t) {
+                for (int t = 0; t < max_within_thread_parallel; ++t) {
                     cells.insert(cells.end(),
                                  std::make_move_iterator(cells_t[t].begin()),
                                  std::make_move_iterator(cells_t[t].end()));
@@ -817,9 +823,12 @@ void * parallel_work(void *parallel_arguments) {
                 Merging.tick_announce();
                 Merging.label_next_interval("Sorting");
                 Merging.tick();
-                // Sorting is costly but necessary! GNU Parallel faster than std::sort
-                //__gnu_parallel::sort(stable_vertices.begin(), stable_vertices.end());
-		std::sort(std::execution::par, stable_vertices.begin(), stable_vertices.end());
+                // Sorting is costly but necessary! GNU Parallel faster than std::sort when available
+                #if USE_GNU_PARALLEL
+                __gnu_parallel::sort(stable_vertices.begin(), stable_vertices.end());
+                #else
+                std::sort(std::execution::par, stable_vertices.begin(), stable_vertices.end());
+                #endif
                 Merging.tick_announce();
                 Merging.label_next_interval("Erasing Dupes");
                 Merging.tick();
@@ -1321,9 +1330,21 @@ int main(int argc, char *argv[]) {
         std::cout << std::endl << std::endl;
     }
 
+    #if USE_GNU_PARALLEL
+    std::cout << "Using GNU Parallel" << std::endl;
+    #else
+    std::cout << "Using std execution" << std::endl;
+    #endif
     Timer all_critical_points(false, "ALL Critical Points");
     // Parallelization
-    int n_parallel = args.n_GPUS * args.threadNumber;
+    int n_parallel = args.n_GPUS * args.threadNumber,
+        max_parallel = std::thread::hardware_concurrency();
+    if (n_parallel > max_parallel) {
+        std::cout << WARN_EMOJI << "Using " << args.n_GPUS << " GPUs with "
+                  << args.threadNumber << " CPU threads EACH (" << n_parallel
+                  << " total threads) on " << max_parallel << "-core machine. "
+                  << "This may degrade performance" << std::endl;
+    }
     if (args.no_partitioning) {
         n_parallel = 1;
     }
@@ -1339,7 +1360,7 @@ int main(int argc, char *argv[]) {
             std::cout << INFO_EMOJI << "Make thread GPU " << i << " ready"
                       << std::endl;
         }
-        thread_args[i] = thread_arguments(i, n_parallel, TV, args.max_VV, args);
+        thread_args[i] = thread_arguments(i, n_parallel, args.max_VV, TV, args);
         pthread_create(&threads[i], NULL, parallel_work, (void*)&thread_args[i]);
     }
     // Merge-able structure for final results
