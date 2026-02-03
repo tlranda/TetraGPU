@@ -1,5 +1,6 @@
 from collections import defaultdict
 import argparse
+import pathlib
 import sys
 
 p = argparse.ArgumentParser()
@@ -8,6 +9,17 @@ p.add_argument('--represents', choices=['all','main','worker'], default='all', h
 args = p.parse_args()
 if len(args.file) == 0:
     args.file.append(None)
+accepted = list()
+dropped = list()
+for fname in args.file:
+    if pathlib.Path(fname).exists():
+        accepted.append(fname)
+    else:
+        dropped.append(fname)
+args.file = accepted
+if len(dropped) > 0:
+    print(f"Dropped {len(dropped)} filenames that could not be found:")
+    print("\t"+"\n\t".join(dropped))
 
 """
 ⏳ Timer[VTK Preprocessing] Elapsed time for interval 0(0, 1): 0.000461

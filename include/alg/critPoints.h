@@ -4,6 +4,8 @@
 #include <pthread.h> // POSIX CPU thread parallelism
 #include <numeric> // Vector accumulation
 #include <functional> // Comparison std::greater
+#include <unordered_set> // unordered_set class
+
 #if 1 //defined(__GNUC__) && defined(_GLIBCXX_PARALLEL)
     #include <parallel/algorithm> // __gnu_parallel::sort()
     #define USE_GNU_PARALLEL 1

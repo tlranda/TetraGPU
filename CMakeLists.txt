@@ -24,35 +24,11 @@ set_target_properties(main PROPERTIES CUDA_RUNTIME_LIBRARY Shared)
 include_directories(${CMAKE_BINARY_DIR})
 
 # CUDA Dependency
-# N01 has a whack installation that has to be adjusted
-execute_process(COMMAND hostname
-                OUTPUT_VARIABLE HOSTNAME
-                OUTPUT_STRIP_TRAILING_WHITESPACE)
-#if (HOSTNAME STREQUAL "n01")
-#    message(STATUS "Adding custom NVIDIA setup for n01")
-#    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS}")
-#    include_directories(/usr/local/cuda-12.2/include /home/tlranda/tools/gcc7/include/c++/7.5.0 /home/tlranda/tools/gcc7/include/c++/7.5.0/x86_64-pc-linux-gnu)
-#    link_directories(/usr/local/cuda-12.2/libnvvp /usr/local/cuda-12.2/lib64 /home/tlranda/tools/gcc7/lib)
-#    target_link_libraries(main PRIVATE -L/home/tlranda/tools/gcc7/lib -lstdc++)
-#elseif(HOSTNAME STREQUAL "voltron")
-#    message(STATUS "Adding custom NVIDIA setup for voltron")
-#    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS}")
-#    include_directories(/usr/local/cuda-12.5/include)
-#    link_directories(/usr/local/cuda-12.5/libnvvp /usr/local/cuda-12.5/lib64)
-#    target_link_libraries(main PRIVATE -lstdc++)
 target_link_libraries(main PRIVATE -lcudart)
-#else()
-#    message(STATUS "Not host 'n01', no ccbin aded")
-#    find_package(CUDA PATHS /usr/local/)
-#    if(NOT CUDA_FOUND)
-#        message("CUDA INSTALLATION NOT FOUND!")
-#        return()
-#    endif()
 set(CMAKE_CUDA_HOST_COMPILER "gcc")
 set(CMAKE_CXX_COMPILER "g++")
 include_directories(${CUDA_INCLUDE_DIRS})
 link_directories(${CUDA_LIBRARY_DIRS})
-#endif()
 
 # VTK Dependency
 find_package(VTK)
@@ -61,11 +37,11 @@ if(NOT VTK_FOUND)
 endif()
 message(STATUS "VTK_VERSION: ${VTK_VERSION}")
 message("VTK_DIR: ${VTK_DIR}")
-# message("VTK_LIBRARIES: ${VTK_LIBRARIES}")
 # OMP dependency
 find_package(OpenMP REQUIRED)
 target_link_libraries(main PRIVATE OpenMP::OpenMP_CXX)
-target_link_libraries(main PRIVATE "-ltbb")
+target_compile_options(main PRIVATE -fopenmp)
+# target_link_libraries(main PRIVATE "-ltbb") # Palmetto Compat
 
 # C++ / CUDA settings
 set(CMAKE_CXX_STANDARD 11)
@@ -77,7 +53,7 @@ set(CMAKE_USE_WIN32_THREADS_INIT 0)
 set(CMAKE_USE_PTHREADS_INIT 1)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 set(CUDA_SEPARABLE_COMPILATION ON)
-set(CMAKE_CUDA_ARCHITECTURES "60;70;80" CACHE STRING "NVIDIA Compute Capbilities to build for")
+set(CMAKE_CUDA_ARCHITECTURES "60;61;70;80" CACHE STRING "NVIDIA Compute Capbilities to build for")
 #set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 target_compile_options(main PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:--ptxas-options=-v>)
 target_compile_options(main PRIVATE -Wall -Wextra -Wno-pedantic) # -Werror

@@ -107,16 +107,13 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
     // are always 4*index, ie offsets[0] = 0, offsets[1] = 4, offsets[4] = 16
 
     std::shared_ptr<TV_Data> data = std::make_shared<TV_Data>(nPoints, nCells);
-    //#pragma omp parallel for num_threads(args.threadNumber)
+    // TODO: Embarassingly parallel but not enough for naive pragma omp parallel
     for (vtkIdType cellIndex = 0; cellIndex < nCells; cellIndex++) {
         std::array<vtkIdType,nbVertsInCell> cell_vertices{
             connectivity[offsets[cellIndex]+0],
             connectivity[offsets[cellIndex]+1],
             connectivity[offsets[cellIndex]+2],
             connectivity[offsets[cellIndex]+3]};
-        // YOU HAVE TO SORT HERE OR ELSE SOME DATASETS WILL BREAK INVARIANTS
-        // HELD BY SUBSEQUENT CODE
-        std::sort(cell_vertices.begin(), cell_vertices.end());
         // Because std::arrays are stack-allocated OVERRIDE the memory do not
         // replace it with memory from this frame
         for (int vertexIndex = 0; vertexIndex < nbVertsInCell; vertexIndex++) {
@@ -179,14 +176,14 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
         vtkDataArray* partitionAttribute = pd->GetArray(use_this_array);
         int * meshPartitionIDs = new int[nPoints];
         // Determine the number of partitions and their counts
-        // TODO: Parallelize
+        // TODO: Parallelism SHOULD help here, but slapping omp parallel is disastrously bad for performance
         for (vtkIdType i = 0; i < nPoints; i++) {
             meshPartitionIDs[i] = partitionAttribute->GetTuple1(i)-1;
         }
-        std::set<int> partition_set(meshPartitionIDs, meshPartitionIDs+nPoints);
+        std::unordered_set<int> partition_set(meshPartitionIDs, meshPartitionIDs+nPoints);
         data->n_partitions = partition_set.size();
         int * mesh_n_per_partition = new int[data->n_partitions]();
-        // TODO: Parallelize
+        // TODO: Parallelism should help, but omp parallel has virtually zero impact on performance
         for (vtkIdType i = 0; i < nPoints; i++) {
             mesh_n_per_partition[meshPartitionIDs[i]]++;
         }
@@ -210,7 +207,7 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
         if (cd->GetNumberOfArrays() == 0) {
             // Do the precompute here, multithreaded
             Timer ecp(false, "External Cell Preprocess");
-            #pragma omp parallel
+            //#pragma omp parallel
             for (int c = 0; c < nCells; c++) {
                 for (int v = 0; v < nbVertsInCell; v++) {
                     int vertexID = data->cells[(c*nbVertsInCell)+v],
@@ -262,6 +259,7 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
                     if (strcmp(search, arrayName) == 0) {
                         std::cout << "Copying cell data array " << arrayName << " for partition " << p << std::endl;
                         vtkDataArray* cellInfo = cd->GetArray(i);
+                        // TODO: Parallelize
                         for (int c = 0; c < data->nCells; c++) {
                             *pointer = cellInfo->GetTuple1(c);
                             pointer++;

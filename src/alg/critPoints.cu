@@ -637,24 +637,8 @@ void * parallel_work(void *parallel_arguments) {
     }
     int max_in_partition = 0;
     std::vector<std::pair<int, int>> partition_metadata;
-    if (_my_args.no_partitioning) {
-        partition_metadata.emplace_back(
-                std::pair<int,int>(TV->n_per_partition[0],
-                                    0)
-                );
-    }
-    else {
-        for (int partition_idx = my_partition_id;
-             partition_idx < TV->n_partitions;
-             partition_idx += n_parallel)
-        // Debug: Analyze ONLY the listed partitions!
-        //for (int partition_idx : {2 /*2,46,10*/})
-        {
-            partition_metadata.emplace_back(
-                    std::pair<int, int>(TV->n_per_partition[partition_idx],
-                                        partition_idx)
-                    );
-        }
+    for (int idx = 0; idx < TV->n_partitions; idx++) {
+        partition_metadata.emplace_back(std::pair<int,int>(TV->n_per_partition[idx], idx));
     }
     // Sort for traversal order (DESCENDING -- should limit need for reallocs)
     #if USE_GNU_PARALLEL
@@ -662,7 +646,13 @@ void * parallel_work(void *parallel_arguments) {
     #else
     std::sort(std::execution::par, partition_metadata.rbegin(), partition_metadata.rend());
     #endif
-    max_in_partition = partition_metadata[0].first;
+    // Prune to your workload
+    std::vector<std::pair<int,int>> my_metadata;
+    for (int idx = my_partition_id; idx < TV->n_partitions; idx += n_parallel) {
+        my_metadata.emplace_back(partition_metadata[idx]);
+    }
+
+    max_in_partition = my_metadata[0].first;
     if (_my_args.debug > NO_DEBUG) {
         out << INFO_EMOJI << timername << " works on at most "
             << max_in_partition << " points in a single partition" << std::endl;
@@ -670,7 +660,7 @@ void * parallel_work(void *parallel_arguments) {
 
     vtkIdType * sparse_vvi = nullptr;
     size_t vvi_size = 0;
-    for (std::pair<int, int> part_meta : partition_metadata) {
+    for (std::pair<int, int> part_meta : my_metadata) {
         my_partition_id = part_meta.second;
         // TV-localization
         #ifdef GRANULAR_TIMING
@@ -723,7 +713,11 @@ void * parallel_work(void *parallel_arguments) {
                 // Need to set:
                 // cells
                 int *partition_cells = &(TV->partitionCells[(my_partition_id) * TV->nCells]);
-                std::set<vtkIdType> included_points;
+                std::unordered_set<vtkIdType> included_points;
+                included_points.reserve(TV->n_per_partition[my_partition_id]);
+                // This isn't precise and should be pre-computable, but does it matter?
+                cells.reserve(TV->n_per_partition[my_partition_id]/4);
+                // Bottleneck
                 for (int i = 0; i < TV->nCells; i++) {
                     if (partition_cells[i] == 1) {
                         cells.emplace_back(std::array<vtkIdType,nbVertsInCell>({
