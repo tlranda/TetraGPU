@@ -383,12 +383,12 @@ void export_classes(unsigned int * classes,
             n_insane[partition_id]++;
         }
         // Output formats
-        if (args.debug > NO_DEBUG && my_class > 0) {
+        //if (args.debug > NO_DEBUG && my_class > 0) {
             /* out << "A Class " << i << " = " << my_class / * class_names[my_class] * /
                 / * << "(Upper: " << n_upper << ", Lower: " << n_lower << ")" * /
                 << std::endl; */
-            out << "A " << i << " " << my_class << std::endl;
-        }
+        //    out << "A " << i << " " << my_class << std::endl;
+        //}
         if (my_class == MAXIMUM_CLASS) {
             n_max[partition_id]++;
         }
@@ -718,20 +718,64 @@ void * parallel_work(void *parallel_arguments) {
                 // This isn't precise and should be pre-computable, but does it matter?
                 cells.reserve(TV->n_per_partition[my_partition_id]/4);
                 // Bottleneck
+                // Becomes: OpenMP parallel on nCells iterator
+                std::vector<std::array<vtkIdType, nbVertsInCell>> * thread_cells = new std::vector<std::array<vtkIdType, nbVertsInCell>>[max_within_thread_parallel];
+                #pragma omp parallel num_threads(max_within_thread_parallel)
+                {
+                    int within_tid = omp_get_thread_num();
+                    for (int i = within_tid; i < TV->nCells; i += max_within_thread_parallel) {
+                        if (partition_cells[i] == 1) {
+                            thread_cells[within_tid].emplace_back(std::array<vtkIdType,nbVertsInCell>({
+                                        TV->cells[(i*nbVertsInCell)+0],
+                                        TV->cells[(i*nbVertsInCell)+1],
+                                        TV->cells[(i*nbVertsInCell)+2],
+                                        TV->cells[(i*nbVertsInCell)+3],
+                                        }));
+                        }
+                    }
+                }
+                /*
                 for (int i = 0; i < TV->nCells; i++) {
                     if (partition_cells[i] == 1) {
+                        // Local version of cells
                         cells.emplace_back(std::array<vtkIdType,nbVertsInCell>({
                                     TV->cells[(i*nbVertsInCell)+0],
                                     TV->cells[(i*nbVertsInCell)+1],
                                     TV->cells[(i*nbVertsInCell)+2],
                                     TV->cells[(i*nbVertsInCell)+3],
                                     }));
+                        // This part will NOT be OpenMP parallel
                         included_points.insert(TV->cells[(i*nbVertsInCell)+0]);
                         included_points.insert(TV->cells[(i*nbVertsInCell)+1]);
                         included_points.insert(TV->cells[(i*nbVertsInCell)+2]);
                         included_points.insert(TV->cells[(i*nbVertsInCell)+3]);
                     }
                 }
+                */
+                size_t total_expected_size = 0;
+                for (int within_tid = 0; within_tid < max_within_thread_parallel; within_tid++) {
+                    total_expected_size += thread_cells[within_tid].size();
+                }
+                if (total_expected_size <= 0) {
+                    out << EXCLAIM_EMOJI << "Parallel search found nothing? Sus" << std::endl;
+                }
+                // Post-OpenMP: Merge TV's (NAIVE: there cannot be duplicates)
+                // Post-OpenMP/Post-Merge: Insert included_points
+                cells.reserve(total_expected_size);
+                for (int within_tid = 0; within_tid < max_within_thread_parallel; within_tid++) {
+                    for (auto& cell : thread_cells[within_tid]) {
+                        for (auto point: cell) {
+                            included_points.insert(point);
+                        }
+                        cells.push_back(std::move(cell));
+                    }
+                    /*
+                    cells.insert(cells.end(),
+                                 std::make_move_iterator(thread_cells[i].begin()),
+                                 std::make_move_iterator(thread_cells[i].end()));
+                    */
+                }
+                delete [] thread_cells;
                 // inverse_partition_mapping (requires UNIQUE, does NOT require sorting for second-order-traversal version)
                 std::vector<vtkIdType> set_points(included_points.begin(), included_points.end());
                 inverse_partition_mapping = std::move(set_points);

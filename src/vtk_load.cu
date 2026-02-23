@@ -174,11 +174,24 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
             exit(EXIT_FAILURE);
         }
         vtkDataArray* partitionAttribute = pd->GetArray(use_this_array);
-        int * meshPartitionIDs = new int[nPoints];
+        int * meshPartitionIDs = new int[nPoints],
+              reindex_from = nPoints;
         // Determine the number of partitions and their counts
         // TODO: Parallelism SHOULD help here, but slapping omp parallel is disastrously bad for performance
         for (vtkIdType i = 0; i < nPoints; i++) {
-            meshPartitionIDs[i] = partitionAttribute->GetTuple1(i)-1;
+            meshPartitionIDs[i] = partitionAttribute->GetTuple1(i)-(reindex_from == nPoints);
+            if (meshPartitionIDs[i] < 0) {
+                meshPartitionIDs[i] = 0;
+                reindex_from = i-1;
+            }
+        }
+        // Have to increment rest of the mesh
+        if (reindex_from < nPoints) {
+            std::cerr << "Reindexing partitions in progress." << std::endl;
+            for (vtkIdType i = reindex_from; i >= 0; i--) {
+                meshPartitionIDs[i]++;
+            }
+            std::cerr << "Partitions reindexed" << std::endl;
         }
         std::unordered_set<int> partition_set(meshPartitionIDs, meshPartitionIDs+nPoints);
         data->n_partitions = partition_set.size();
