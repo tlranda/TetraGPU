@@ -25,7 +25,7 @@ ncpus=$( lscpu | grep -e "^CPU(s):" | awk '{print $NF}' );
 full_subscribe=1; # No CPU parallelism, really
 echo "Execute on host ${HOSTNAME_OVERRIDE}";
 nvidia-smi;
-ngpus=$( nvidia-smi -L | wc -l );
+ngpus=3; #$( nvidia-smi -L | wc -l );
 echo "NCPUS: ${ncpus} | NGPUS: ${ngpus}";
 echo "Full subscribe: ${full_subscribe}";
 
@@ -114,7 +114,9 @@ for ds in ${datasets[@]}; do
         cmd="${cmd} --max_VV ${limit_size}";
         echo -e "\tLimiting max adjacency to ${limit_size}";
     fi;
-    for gpu_count in `seq 1 $ngpus`; do
+    for gpu_count in `seq 0 $ngpus`; do
+	# Powers of two please
+	gpu_count=$((2 ** ${gpu_count}));
         base_cmd="${cmd} -g ${gpu_count}";
         for iteration in `seq 1 ${n_repeats}`; do
             to_make="${HOSTNAME_OVERRIDE}_outputs/${shortname}_${gpu_count}_GPUS_${full_subscribe}CPUS_iter_${iteration}.output";
