@@ -552,7 +552,7 @@ void * parallel_work(void *parallel_arguments) {
     const int gpu_id = thread_args->gpu_id,
               max_VV_override = thread_args->max_VV,
               n_parallel = thread_args->n_parallel;
-    int max_within_thread_parallel = std::thread::hardware_concurrency() / n_parallel;
+    int max_within_thread_parallel = 6; //std::thread::hardware_concurrency() / n_parallel;
     if (max_within_thread_parallel < 1) max_within_thread_parallel = 1;
     const std::shared_ptr<TV_Data> TV = thread_args->TV;
     runtime_arguments _my_args = thread_args->args;
