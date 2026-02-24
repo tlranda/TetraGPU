@@ -174,14 +174,28 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
             exit(EXIT_FAILURE);
         }
         vtkDataArray* partitionAttribute = pd->GetArray(use_this_array);
-        int * meshPartitionIDs = new int[nPoints];
+        int * meshPartitionIDs = new int[nPoints],
+              reindex_from = nPoints;
         // Determine the number of partitions and their counts
         // TODO: Parallelism SHOULD help here, but slapping omp parallel is disastrously bad for performance
         for (vtkIdType i = 0; i < nPoints; i++) {
-            meshPartitionIDs[i] = partitionAttribute->GetTuple1(i)-1;
+            meshPartitionIDs[i] = partitionAttribute->GetTuple1(i)-(reindex_from == nPoints);
+            if (meshPartitionIDs[i] < 0) {
+                meshPartitionIDs[i] = 0;
+                reindex_from = i-1;
+            }
+        }
+        // Have to increment rest of the mesh
+        if (reindex_from < nPoints) {
+            std::cerr << "Reindexing partitions in progress." << std::endl;
+            for (vtkIdType i = reindex_from; i >= 0; i--) {
+                meshPartitionIDs[i]++;
+            }
+            std::cerr << "Partitions reindexed" << std::endl;
         }
         std::unordered_set<int> partition_set(meshPartitionIDs, meshPartitionIDs+nPoints);
         data->n_partitions = partition_set.size();
+        std::cout << "Detected " << data->n_partitions << " unique partitions" << std::endl;
         int * mesh_n_per_partition = new int[data->n_partitions]();
         // TODO: Parallelism should help, but omp parallel has virtually zero impact on performance
         for (vtkIdType i = 0; i < nPoints; i++) {
@@ -246,33 +260,34 @@ std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args) {
         }
         else {
             int * pointer = data->partitionCells;
-            for (int p = 0; p < data->n_partitions; p++) {
-                char search[32] = {0};
-                sprintf(search, "partition_cells_%d", p);
-                std::cout << "Searching for array: " << search << std::endl;
-                bool found = false;
-                for (int i = 0; i < cd->GetNumberOfArrays(); i++) {
-                    const char * arrayName = cd->GetArrayName(i);
-                    if (p == 0) {
-                        std::cout << "\tCell Array " << i << " is named " << (arrayName ? arrayName : "NULL (not specified)") << std::endl;
-                    }
-                    if (strcmp(search, arrayName) == 0) {
-                        std::cout << "Copying cell data array " << arrayName << " for partition " << p << std::endl;
-                        vtkDataArray* cellInfo = cd->GetArray(i);
-                        // TODO: Parallelize
-                        for (int c = 0; c < data->nCells; c++) {
-                            *pointer = cellInfo->GetTuple1(c);
-                            pointer++;
-                        }
-                        found = true;
-                    }
+            // Redo this to make a mapping so you don't double-search for an array,
+            // Then parallelize the read in
+            std::map<int, vtkDataArray*> partition_maps;
+            int mapped = 0;
+            for (int i = 0; i < cd->GetNumberOfArrays(); i++) {
+                const char * arrayName = cd->GetArrayName(i);
+                std::string strArrayName(arrayName);
+                if (strArrayName.substr(0, 16) == "partition_cells_") {
+                    partition_maps[atoi(strArrayName.substr(16, strArrayName.length()).c_str())] = cd->GetArray(i);
+                    mapped++;
                 }
-                if (!found) {
-                    // Cannot use partial / missing data
-                    std::cerr << WARN_EMOJI << "Failed to find partition cells (cellData) array " << search << ", falling back to slower CPU-side precompute" << std::endl;
-                    delete[] data->partitionCells;
-                    data->partitionCells = nullptr;
-                    break;
+            }
+            if (mapped < data->n_partitions) {
+                // Cannot use partial / missing data
+                std::cerr << WARN_EMOJI << "Failed to find all partition cells (cellData) arrays, falling back to slower CPU-side precompute" << std::endl;
+                delete[] data->partitionCells;
+                data->partitionCells = nullptr;
+            }
+            else {
+                int max_concurrency = std::thread::hardware_concurrency();
+                #pragma omp parallel for num_threads(max_concurrency)
+                for (int i = 0; i < data->n_partitions; i++) {
+                    vtkDataArray* cellInfo = partition_maps[i];
+                    int * local_pointer = pointer + (i * nCells);
+                    for (int c = 0; c < data->nCells; c++) {
+                        *local_pointer = cellInfo->GetTuple1(c);
+                        local_pointer++;
+                    }
                 }
             }
         }

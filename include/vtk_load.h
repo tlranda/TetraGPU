@@ -14,6 +14,7 @@
 #include "metrics.h"
 // STL
 #include <unordered_set> // unordered set class
+#include <thread> // std::thread::hardware_concurrency
 
 int checkCellTypes(vtkPointSet *object);
 std::shared_ptr<TV_Data> get_TV_from_VTK(const runtime_arguments args);
