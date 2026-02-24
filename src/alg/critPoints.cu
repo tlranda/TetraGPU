@@ -756,9 +756,6 @@ void * parallel_work(void *parallel_arguments) {
                 for (int within_tid = 0; within_tid < max_within_thread_parallel; within_tid++) {
                     total_expected_size += thread_cells[within_tid].size();
                 }
-                if (total_expected_size <= 0) {
-                    out << EXCLAIM_EMOJI << "Parallel search found nothing? Sus" << std::endl;
-                }
                 // Post-OpenMP: Merge TV's (NAIVE: there cannot be duplicates)
                 // Post-OpenMP/Post-Merge: Insert included_points
                 cells.reserve(total_expected_size);
