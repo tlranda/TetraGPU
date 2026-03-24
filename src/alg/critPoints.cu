@@ -10,8 +10,7 @@
    sub-classes of saddles).
 */
 
-// This kernel helps to ensure consistent and accurate timing of device-side
-// events
+// This kernel helps to ensure consistent and accurate timing of device-side events
 __global__ void dummy_kernel(void) {
     //int tid = (blockIdx.x * blockDim.x) + threadIdx.x;
 }
@@ -21,21 +20,31 @@ __global__ void dummy_kernel(void) {
 #define REGULAR_CLASS 3
 #define SADDLE_CLASS  4
 
-#define GRANULAR_TIMING
+// Extra CPU-side timing of events; low but nonzero extra overhead -- disable for performance timings by setting =0 (False) rather than =1 (True)
+#define GRANULAR_TIMING 0
 
-//*
-#define TID_SELECTION (blockDim.x * blockIdx.x) + threadIdx.x
+// Debugging specific block executions (Set equal to partition # to output, undefine for no debug)
+#define DETAILED_PARTITION_INFORMATION 1
+
+// GPU-kernel Debug controls (for development/validation)
+// Kernel printing control =0 (False), =1 (True, DEBUG ONLY)
 #define PRINT_ON 0
+// Constrain kernel execution to a single block =0 (False), =1 (True, DEBUG ONLY)
 #define CONSTRAIN_BLOCK 0
-//*/
-// Debugging specific block executions
-/*
-#define FORCED_BLOCK_IDX 30
-#define TID_SELECTION (blockDim.x * FORCED_BLOCK_IDX) + threadIdx.x
-#define PRINT_ON 1
-#define CONSTRAIN_BLOCK 1
-*/
+// Sub-value for constraint above: Set a known block IDX explicitly when defined
+//#define FORCED_BLOCK_IDX 0
+// If you want to search for a block IDX given a global ID, use SEARCH_BLOCK_IDX with FORCED_BLOCK_IDX=0
+//#define SEARCH_BLOCK_IDX 7
+// GPU thread assignment gets altered when a special block is set
+#ifdef FORCED_BLOCK_IDX
 
+#define TID_SELECTION (blockDim.x * FORCED_BLOCK_IDX) + threadIdx.x
+
+#else
+
+#define TID_SELECTION (blockDim.x * blockIdx.x) + threadIdx.x
+
+#endif
 
 __global__ void critPoints(const vtkIdType * __restrict__ VV,
                            const unsigned int * __restrict__ VV_index,
@@ -45,7 +54,10 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
                            const double * __restrict__ scalar_values,
                            const int * __restrict__ partition,
                            const vtkIdType * __restrict__ vvi,
-                           const vtkIdType * __restrict__ ivvi /* ONLY input with global-mesh size allocation */,
+                           const vtkIdType * __restrict__ ivvi, /* ONLY input with global-mesh size allocation */
+                           #if CONSTRAIN_BLOCK
+                           const int FORCED_BLOCK_IDX,
+                           #endif
                            unsigned int * __restrict__ classes) {
     extern __shared__ unsigned int block_shared[];
 
@@ -139,7 +151,7 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
     __syncthreads();
     #if PRINT_ON
     if (execution_mask) {
-        printf("Block %d Thread %02d B init on my_1d %ld and my_2d %ld with "
+        printf("Block %d Thread %02d init on my_1d %ld and my_2d %ld with "
                "valence %d based on %lf (block) vs %lf (thread)\n",
                blockIdx.x, threadIdx.x, my_1d, my_2d, my_class,
                scalar_values[indirect_my_1d], scalar_values[indirect_my_2d]);
@@ -220,13 +232,11 @@ __global__ void critPoints(const vtkIdType * __restrict__ VV,
                         const vtkIdType theirNeighborhood = neighborhood[i-min_my_1d];
                         if (VV[j] == my_2d && neighborhood[threadIdx.x] > theirNeighborhood) {
                             #if PRINT_ON
-                            /*
                             printf("Block %d Thread %02d neighborhood update "
                                     "iteration %0d moves %ld --> %ld\n",
                                     blockIdx.x, threadIdx.x, to_converge,
                                     neighborhood[threadIdx.x],
                                     theirNeighborhood);
-                            */
                             #endif
                             neighborhood[threadIdx.x] = theirNeighborhood;
                             // Denote LACK of convergence this iteration
@@ -350,7 +360,7 @@ void export_classes(unsigned int * classes,
     }
     // Used for actual file handling
     std::ostream out(output_buffer);
-    std::string class_names[] = {"NULL", "min", "max", "regular", "saddle"};
+    std::string class_names[] = {"NULL", "max", "min", "regular", "saddle"};
     std::vector<vtkIdType> n_insane(TV.n_partitions,0),
                            n_min(TV.n_partitions,0),
                            n_max(TV.n_partitions,0),
@@ -361,7 +371,7 @@ void export_classes(unsigned int * classes,
         const int partition_id = args.no_partitioning ? 0 : TV.partitionIDs[i];
         // The classification information is provided, then the class:
         // {# upper, # lower, class}
-        // CLASSES = {'minimum': 1, 'maximum': 2, 'regular': 3, 'saddle': 4}
+        // CLASSES = {'void': 0, 'maximum': 1, 'minimum': 2, 'regular': 3, 'saddle': 4}
         const unsigned int n_upper  = classes[(i*3)],
                            n_lower  = classes[(i*3)+1],
                            my_class = classes[(i*3)+2];
@@ -389,6 +399,15 @@ void export_classes(unsigned int * classes,
                 << std::endl; */
         //    out << "A " << i << " " << my_class << std::endl;
         //}
+        #ifdef DETAILED_PARTITION_INFORMATION
+        // Show for given partition when non-void and non-regular
+        if (partition_id == DETAILED_PARTITION_INFORMATION && my_class > 0 && my_class != 3) {
+            out << "Partition " << DETAILED_PARTITION_INFORMATION
+                << " has a " << class_names[my_class]
+                << " for global vertex ID " << i << " (upper: " << n_upper
+                << ", lower: " << n_lower << ")" << std::endl;
+        }
+        #endif
         if (my_class == MAXIMUM_CLASS) {
             n_max[partition_id]++;
         }
@@ -573,7 +592,7 @@ void * parallel_work(void *parallel_arguments) {
 
     char timername[32];
     sprintf(timername, "Parallel worker %02d", gpu_id);
-    #ifdef GRANULAR_TIMING
+    #if GRANULAR_TIMING
     // Set up parallel timer
     char intervalname[128];
     Timer timer(true, timername, _my_args.debug == NO_DEBUG, out);
@@ -663,7 +682,7 @@ void * parallel_work(void *parallel_arguments) {
     for (std::pair<int, int> part_meta : my_metadata) {
         my_partition_id = part_meta.second;
         // TV-localization
-        #ifdef GRANULAR_TIMING
+        #if GRANULAR_TIMING
         sprintf(intervalname, "%s TV localization for partition %d",
                 timername, my_partition_id);
         timer.label_next_interval(intervalname);
@@ -699,7 +718,7 @@ void * parallel_work(void *parallel_arguments) {
                    "identity!" << std::endl;
         }
         else {
-            #ifdef GRANULAR_TIMING
+            #if GRANULAR_TIMING
             char TVlocname[128];
             sprintf(TVlocname, "TV Localization] [Partition %d", my_partition_id);
             Timer TV_LOCALIZATION(true, TVlocname, false, out);
@@ -818,7 +837,7 @@ void * parallel_work(void *parallel_arguments) {
                     }
                 }
                 // MERGE results
-                #ifdef GRANULAR_TIMING
+                #if GRANULAR_TIMING
                 TV_LOCALIZATION.tick_announce();
                 // NUMBER TWO MOST COSTLY
                 TV_LOCALIZATION.label_next_interval("Merge");
@@ -874,7 +893,7 @@ void * parallel_work(void *parallel_arguments) {
                                                   stable_vertices.end()),
                                       stable_vertices.end());
                 Merging.tick_announce();
-                #ifdef GRANULAR_TIMING
+                #if GRANULAR_TIMING
                 TV_LOCALIZATION.tick_announce();
                 // NUMBER TWO MOST COSTLY
                 TV_LOCALIZATION.label_next_interval("Remap");
@@ -886,7 +905,7 @@ void * parallel_work(void *parallel_arguments) {
                 }
                 // This is correct, save an operation or two
                 inverse_partition_mapping = std::move(stable_vertices);
-                #ifdef GRANULAR_TIMING
+                #if GRANULAR_TIMING
                 TV_LOCALIZATION.tick_announce();
                 TV_LOCALIZATION.label_next_interval("TV cell remapping via VVI and IVVI");
                 TV_LOCALIZATION.tick();
@@ -915,14 +934,14 @@ void * parallel_work(void *parallel_arguments) {
                 sparse_vvi[nth_point++] = point;
             }
 
-            #ifdef GRANULAR_TIMING
+            #if GRANULAR_TIMING
             TV_LOCALIZATION.tick_announce();
             #endif
 
             n_points = inverse_partition_mapping.size();
             n_cells = cells.size();
 
-            #ifdef GRANULAR_TIMING
+            #if GRANULAR_TIMING
             TV_LOCALIZATION.label_next_interval("Partition and Vertex remapping");
             TV_LOCALIZATION.tick();
             #endif
@@ -936,12 +955,12 @@ void * parallel_work(void *parallel_arguments) {
                 partition_IDs[nth_point] = (TV->partitionIDs[vertex] == my_partition_id);
                 localVertexAttributes[nth_point++] = TV->vertexAttributes[vertex];
             }
-            #ifdef GRANULAR_TIMING
+            #if GRANULAR_TIMING
             TV_LOCALIZATION.tick_announce();
             #endif
 
             // Set TV_local using localized data
-            #ifdef GRANULAR_TIMING
+            #if GRANULAR_TIMING
             TV_LOCALIZATION.label_next_interval("Setup TV_local object");
             TV_LOCALIZATION.tick();
             #endif
@@ -956,7 +975,7 @@ void * parallel_work(void *parallel_arguments) {
             }
             TV_local->partitionIDs = partition_IDs;
             TV_local->vertexAttributes = localVertexAttributes;
-            #ifdef GRANULAR_TIMING
+            #if GRANULAR_TIMING
             TV_LOCALIZATION.tick_announce();
             TV_LOCALIZATION.label_next_interval("Approx max VV");
             TV_LOCALIZATION.tick();
@@ -971,7 +990,7 @@ void * parallel_work(void *parallel_arguments) {
             else {
                 max_VV_local = max_allocated_VV;
             }
-            #ifdef GRANULAR_TIMING
+            #if GRANULAR_TIMING
             TV_LOCALIZATION.tick_announce();
             #endif
             if (_my_args.debug > NO_DEBUG) {
@@ -1001,12 +1020,12 @@ void * parallel_work(void *parallel_arguments) {
             }
             max_VV_local = max_VV_override;
         }
-        #ifdef GRANULAR_TIMING
+        #if GRANULAR_TIMING
         timer.tick_announce();
         #endif
 
         // Data Sizes & Allocations for VV
-        #ifdef GRANULAR_TIMING
+        #if GRANULAR_TIMING
         sprintf(intervalname, "%s VV setup", timername);
         timer.label_next_interval(intervalname);
         timer.tick();
@@ -1099,7 +1118,7 @@ void * parallel_work(void *parallel_arguments) {
                 << " should auto-exit (" << (thread_block_size.x * grid_size.x) - n_to_compute
                 << ")" << std::endl;
         }
-        #ifdef GRANULAR_TIMING
+        #if GRANULAR_TIMING
         timer.tick_announce();
         char kerneltimername[32];
         sprintf(kerneltimername, "Parallel %s kernel %02d", "VV", gpu_id);
@@ -1117,7 +1136,7 @@ void * parallel_work(void *parallel_arguments) {
                                     vv_index,
                                     vv_computed));
         // Only synchronized to ensure VV kernel duration is appropriately tracked
-        #ifdef GRANULAR_TIMING
+        #if GRANULAR_TIMING
         // NO SYNC unless timing granularly -- ONLY want this for discrete kernel timing!
         CUDA_WARN(cudaStreamSynchronize(thread_stream));
         vvKernel.tick();
@@ -1134,7 +1153,7 @@ void * parallel_work(void *parallel_arguments) {
         // NOTE: Asynchronous WRT CPU, we can continue to setup SFCP kernel while VV runs
 
         // Additional allocations and settings for SFCP kernel
-        #ifdef GRANULAR_TIMING
+        #if GRANULAR_TIMING
         sprintf(intervalname, "%s Setup for SFCP kernel", timername);
         timer.label_next_interval(intervalname);
         timer.tick();
@@ -1186,15 +1205,28 @@ void * parallel_work(void *parallel_arguments) {
 
         #if CONSTRAIN_BLOCK
         grid_size.x = 1;
+        int force_block = 0;
+        #ifdef FORCED_BLOCK_IDX
+        force_block = FORCED_BLOCK_IDX;
+        #endif
+        #ifdef SEARCH_BLOCK_IDX
+        // Find the block to force a particular global ID
+        if (dense_ivvi_host[SEARCH_BLOCK_IDX] != 0) {
+            force_block = dense_ivvi_host[SEARCH_BLOCK_IDX];
+            std::cerr << "Found searched block idx " << SEARCH_BLOCK_IDX
+                      << " in partition " << my_partition_id << " at local id "
+                      << force_block << std::endl;
+        }
+        #endif
         std::cerr << EXCLAIM_EMOJI << "DEBUG! Setting kernel size to 1 block (as block "
-                  << FORCED_BLOCK_IDX << ")" << std::endl;
+                  << force_block << ")" << std::endl;
         #endif
         if (_my_args.debug > DEBUG_MIN) {
             out << timername << " Launch critPoints kernel with " << n_to_compute
                 << " units of work (" << grid_size.x << " blocks, "
                 << thread_block_size.x << " threads per block)" << std::endl;
         }
-        #ifdef GRANULAR_TIMING
+        #if GRANULAR_TIMING
         // ONLY sync to increase reliability of kernel timing
         CUDA_WARN(cudaStreamSynchronize(thread_stream));
         timer.tick_announce();
@@ -1216,8 +1248,11 @@ void * parallel_work(void *parallel_arguments) {
                                                   partition,            // Localized size
                                                   dev_vvi,              // Localized size
                                                   dev_ivvi,             // GLOBAL SIZE
+                                                  #if CONSTRAIN_BLOCK
+                                                  force_block,
+                                                  #endif
                                                   device_CPCs));        // Localized size
-        #ifdef GRANULAR_TIMING
+        #if GRANULAR_TIMING
         CUDA_WARN(cudaStreamSynchronize(thread_stream)); // Make algorithm timing accurate
         sfcpKernel.tick();
         sprintf(intervalname, "%s SFCP kernel", timername);
@@ -1286,14 +1321,14 @@ void * parallel_work(void *parallel_arguments) {
                 */
             }
         }
-        #ifdef GRANULAR_TIMING
+        #if GRANULAR_TIMING
         timer.tick_announce();
         #endif
         if (!_my_args.no_partitioning) {
             delete TV_local;
         }
     }
-    #ifdef GRANULAR_TIMING
+    #if GRANULAR_TIMING
     thread_time.tick_announce();
     // Free allocated memory
     sprintf(intervalname, "%s Free memory", timername);
@@ -1315,7 +1350,7 @@ void * parallel_work(void *parallel_arguments) {
     if (host_CPCs != nullptr && !_my_args.no_partitioning) CUDA_WARN(cudaFreeHost(host_CPCs));
     if (device_CPCs != nullptr) CUDA_WARN(cudaFree(device_CPCs));
     if (device_scalar_values != nullptr) CUDA_WARN(cudaFree(device_scalar_values));
-    #ifdef GRANULAR_TIMING
+    #if GRANULAR_TIMING
     timer.tick_announce();
     #endif
     return (void*)dense_CPCs;
